@@ -674,7 +674,9 @@ def load_data():
     try:
         sh = _gsheet()
     except Exception as e:
+        import traceback
         st.error(f"Cannot connect to Google Sheet: {type(e).__name__}: {e}")
+        st.code(traceback.format_exc())
         st.stop()
 
     data = {}

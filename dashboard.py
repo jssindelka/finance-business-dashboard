@@ -104,15 +104,25 @@ def _get_google_creds():
     # ── Streamlit Cloud: read credentials from st.secrets ──
     if 'google_credentials' in st.secrets:
         sec = st.secrets['google_credentials']
+        # Manual token exchange to guarantee a fresh access token
+        import urllib.request, urllib.parse
+        token_data = urllib.parse.urlencode({
+            'client_id': str(sec['client_id']),
+            'client_secret': str(sec['client_secret']),
+            'refresh_token': str(sec['refresh_token']),
+            'grant_type': 'refresh_token',
+        }).encode()
+        req = urllib.request.Request(str(sec['token_uri']), data=token_data)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            token_resp = json.loads(resp.read())
         creds = Credentials(
-            token=None,
+            token=token_resp['access_token'],
             refresh_token=str(sec['refresh_token']),
             token_uri=str(sec['token_uri']),
             client_id=str(sec['client_id']),
             client_secret=str(sec['client_secret']),
             scopes=_default_scopes,
         )
-        creds.refresh(Request())
         return creds
 
     # ── Local dev: read from token.json ──

@@ -95,6 +95,63 @@ INVOICES_FOLDER = f"INVOICES {CURRENT_YEAR}"
 _LEGACY_COST_SUBFOLDERS = ['03_Regular Cost', '04_Irregular Cost']
 _NEW_COST_SUBFOLDER = 'Costs'
 
+# Tax rate for self-employed income estimate (adjust to your bracket)
+TAX_RATE_INCOME = 0.30   # ~30% combined income tax + solidarity surcharge
+VAT_RATE = 0.19          # 19% German Umsatzsteuer
+
+
+# ─── Activity Log ────────────────────────────────────────────────────────────
+
+def _log_activity(action, details=''):
+    """Append an entry to the in-session activity log and persist to Google Sheets."""
+    entry = {
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'action': action,
+        'details': details,
+    }
+    if 'activity_log' not in st.session_state:
+        st.session_state['activity_log'] = []
+    st.session_state['activity_log'].insert(0, entry)
+    # Keep only last 200 entries in session
+    st.session_state['activity_log'] = st.session_state['activity_log'][:200]
+    # Persist to Google Sheets (best-effort, non-blocking)
+    try:
+        sh = _gsheet()
+        try:
+            ws_log = sh.worksheet('Log')
+        except Exception:
+            ws_log = sh.add_worksheet(title='Log', rows=500, cols=3)
+            ws_log.update('A1:C1', [['Timestamp', 'Action', 'Details']])
+        ws_log.append_row(
+            [entry['timestamp'], entry['action'], entry['details']],
+            value_input_option='RAW',
+        )
+    except Exception:
+        pass  # Log persistence is best-effort
+
+
+def _load_activity_log():
+    """Load recent activity log entries from Google Sheets."""
+    if 'activity_log_loaded' in st.session_state:
+        return st.session_state.get('activity_log', [])
+    try:
+        ws_log = _gsheet().worksheet('Log')
+        rows = ws_log.get_all_values()
+        entries = []
+        for row in reversed(rows[1:]):  # skip header, newest first
+            if len(row) >= 3:
+                entries.append({
+                    'timestamp': row[0],
+                    'action': row[1],
+                    'details': row[2],
+                })
+        st.session_state['activity_log'] = entries[:200]
+        st.session_state['activity_log_loaded'] = True
+    except Exception:
+        st.session_state['activity_log'] = st.session_state.get('activity_log', [])
+        st.session_state['activity_log_loaded'] = True
+    return st.session_state['activity_log']
+
 
 # ─── Google API Helpers ──────────────────────────────────────────────────────
 
@@ -1033,6 +1090,77 @@ def tab_overview(data):
     chart_card_html('Monthly Breakdown',
                     html_table(['Month', 'Income', 'Expenses', 'Profit / Loss'], rows, num_cols={1, 2, 3}))
 
+    # --- Tax / VAT Estimate (#7) ---
+    section_title('Tax & VAT Estimate')
+
+    # Calculate deductible expenses (all business expenses are deductible)
+    taxable_income = total_income - total_expenses
+    est_income_tax = max(0, taxable_income * TAX_RATE_INCOME)
+    est_vat = total_income * VAT_RATE  # VAT on gross income (simplified: Soll-Versteuerung)
+    vat_deductible = total_expenses * VAT_RATE  # Input VAT from expenses (Vorsteuer)
+    net_vat = max(0, est_vat - vat_deductible)
+    total_tax_burden = est_income_tax + net_vat
+    after_tax = total_income - total_expenses - total_tax_burden
+
+    tk1, tk2, tk3, tk4 = st.columns(4)
+    with tk1:
+        st.markdown(f"""
+        <div class="card">
+            <div class="card-label">Taxable Profit</div>
+            <div class="card-value {'positive' if taxable_income >= 0 else 'negative'}">{fmt_eur(taxable_income)}</div>
+            <div class="card-sub">Income minus deductible expenses</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with tk2:
+        st.markdown(f"""
+        <div class="card">
+            <div class="card-label">Est. Income Tax (~{TAX_RATE_INCOME:.0%})</div>
+            <div class="card-value negative">{fmt_eur(est_income_tax)}</div>
+            <div class="card-sub">Set aside for Einkommensteuer</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with tk3:
+        st.markdown(f"""
+        <div class="card">
+            <div class="card-label">Net VAT / Umsatzsteuer</div>
+            <div class="card-value negative">{fmt_eur(net_vat)}</div>
+            <div class="card-sub">{fmt_eur(est_vat)} output \u2212 {fmt_eur(vat_deductible)} input</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with tk4:
+        st.markdown(f"""
+        <div class="card" style="border-color: rgba(232,93,38,0.2); background: linear-gradient(135deg, {C_SURFACE} 0%, rgba(232,93,38,0.04) 100%);">
+            <div class="card-label">After-Tax Estimate</div>
+            <div class="card-value {'positive' if after_tax >= 0 else 'negative'}">{fmt_eur(after_tax)}</div>
+            <div class="card-sub">Total tax burden: {fmt_eur(total_tax_burden)}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Quarterly VAT breakdown
+    quarters = [
+        ('Q1 (Jan-Mar)', ['January', 'February', 'March']),
+        ('Q2 (Apr-Jun)', ['April', 'May', 'June']),
+        ('Q3 (Jul-Sep)', ['July', 'August', 'September']),
+        ('Q4 (Oct-Dec)', ['October', 'November', 'December']),
+    ]
+    q_rows = []
+    for q_name, q_months in quarters:
+        q_income = sum(overview.loc[overview['Month'] == m, 'Income'].sum() for m in q_months)
+        q_expenses = sum(overview.loc[overview['Month'] == m, 'Expenses'].sum() for m in q_months)
+        if q_income > 0 or q_expenses > 0:
+            q_vat_out = q_income * VAT_RATE
+            q_vat_in = q_expenses * VAT_RATE
+            q_net_vat = max(0, q_vat_out - q_vat_in)
+            q_rows.append({
+                'Quarter': q_name,
+                'Income': fmt_eur(q_income),
+                'Expenses': fmt_eur(q_expenses),
+                'VAT Due': fmt_eur(q_net_vat),
+            })
+    if q_rows:
+        chart_card_html('Quarterly VAT Summary',
+                        html_table(['Quarter', 'Income', 'Expenses', 'VAT Due'], q_rows, num_cols={1, 2, 3}))
+
 
 # ─── TAB 2 — Expenses ───────────────────────────────────────────────────────
 
@@ -1120,6 +1248,32 @@ def tab_expenses(data):
     # --- Transaction History Table with Edit/Delete ---
     section_title('Transaction History')
 
+    # Search & Filter controls (#1)
+    fc1, fc2, fc3 = st.columns([2.5, 1.5, 1.5])
+    with fc1:
+        search_q = st.text_input("Search", placeholder="Search recipient, notes...",
+                                  key='exp_search', label_visibility='collapsed')
+    with fc2:
+        all_cats = ['All Categories'] + sorted(df['Category'].dropna().unique().tolist())
+        filter_cat = st.selectbox("Category", all_cats, key='exp_filter_cat', label_visibility='collapsed')
+    with fc3:
+        filter_months = ['All Months'] + [m for m in MONTHS if m in df['Month'].values]
+        filter_month = st.selectbox("Month", filter_months, key='exp_filter_month', label_visibility='collapsed')
+
+    filtered_df = df.copy()
+    if search_q.strip():
+        q_lower = search_q.strip().lower()
+        mask = filtered_df.apply(
+            lambda r: q_lower in str(r.get('Recipient', '')).lower()
+                      or q_lower in str(r.get('Notes', '')).lower()
+                      or q_lower in str(r.get('Category', '')).lower(),
+            axis=1)
+        filtered_df = filtered_df[mask]
+    if filter_cat != 'All Categories':
+        filtered_df = filtered_df[filtered_df['Category'] == filter_cat]
+    if filter_month != 'All Months':
+        filtered_df = filtered_df[filtered_df['Month'] == filter_month]
+
     st.markdown("""<div class="tx-header">
         <span style="flex:0.4">&#35;</span>
         <span style="flex:1.2">DATE</span>
@@ -1129,7 +1283,7 @@ def tab_expenses(data):
         <span style="flex:1.6;text-align:center">ACTIONS</span>
     </div>""", unsafe_allow_html=True)
 
-    sorted_exp = df.sort_values('Date of Payment', ascending=False).reset_index(drop=True)
+    sorted_exp = filtered_df.sort_values('Date of Payment', ascending=False).reset_index(drop=True)
     total_count = len(sorted_exp)
 
     # Pagination
@@ -1340,8 +1494,7 @@ def tab_income(data):
             <span style="flex:1.0">PROJECT</span>
             <span style="flex:0.9">CATEGORY</span>
             <span style="flex:0.6;text-align:right">NETTO</span>
-            <span style="flex:0.5">STATUS</span>
-            <span style="flex:0.6;text-align:center">ACTION</span>
+            <span style="flex:1.2;text-align:center">ACTIONS</span>
         </div>""", unsafe_allow_html=True)
 
         _cs2 = 'font-size:0.82rem;color:#f0f0f0;padding:0.3rem 0;font-family:-apple-system,Helvetica Neue,Helvetica,Arial,sans-serif;'
@@ -1360,7 +1513,7 @@ def tab_income(data):
             cat_name = str(r.get('Category', ''))
             netto = pd.to_numeric(r.get('Netto (€)', 0), errors='coerce')
 
-            cols = st.columns([0.7, 0.7, 1.2, 1.0, 0.9, 0.6, 0.5, 0.6])
+            cols = st.columns([0.7, 0.7, 1.2, 1.0, 0.9, 0.6, 0.6, 0.6])
             with cols[0]:
                 st.markdown(f'<div style="{_cs2}">{inv_num}</div>', unsafe_allow_html=True)
             with cols[1]:
@@ -1374,7 +1527,10 @@ def tab_income(data):
             with cols[5]:
                 st.markdown(f'<div style="{_cs2}text-align:right;font-weight:600">{fmt_eur(netto) if not pd.isna(netto) else ""}</div>', unsafe_allow_html=True)
             with cols[6]:
-                st.markdown(f'<div style="{_cs2}"><span class="badge" style="color:{C_RED};background:{C_RED_DIM}">Unpaid</span></div>', unsafe_allow_html=True)
+                st.markdown('<div class="tx-actions">', unsafe_allow_html=True)
+                if st.button("Mark Paid", key=f"paid_{inv_num}"):
+                    mark_invoice_paid_dialog(r.to_dict())
+                st.markdown('</div>', unsafe_allow_html=True)
             with cols[7]:
                 st.markdown('<div class="tx-actions tx-del">', unsafe_allow_html=True)
                 if st.button("Delete", key=f"del_unpaid_{inv_num}"):
@@ -1540,6 +1696,88 @@ def tab_goal(data):
         fig.update_yaxes(range=[0, goal * 1.1])
         st.plotly_chart(fig, use_container_width=True)
 
+    # --- Cash Flow Projection (#6) ---
+    section_title('Cash Flow Projection')
+
+    ov_dict = dict(zip(overview['Month'], overview['Income']))
+    exp_dict = dict(zip(overview['Month'], overview['Expenses']))
+    active_income_months = [m for m in MONTHS if ov_dict.get(m, 0) > 0]
+
+    if active_income_months:
+        avg_monthly_income = sum(ov_dict[m] for m in active_income_months) / len(active_income_months)
+        active_expense_months = [m for m in MONTHS if exp_dict.get(m, 0) > 0]
+        avg_monthly_expenses = (sum(exp_dict[m] for m in active_expense_months) / len(active_expense_months)) if active_expense_months else 0
+        avg_monthly_net = avg_monthly_income - avg_monthly_expenses
+
+        # Project forward
+        current_month_idx = len(active_income_months)  # how many months of data we have
+        projected_income_eoy = sum(ov_dict.get(m, 0) for m in MONTHS) + avg_monthly_income * (12 - current_month_idx)
+        projected_expenses_eoy = sum(exp_dict.get(m, 0) for m in MONTHS) + avg_monthly_expenses * (12 - current_month_idx)
+        projected_net_eoy = projected_income_eoy - projected_expenses_eoy
+
+        # Goal projection
+        if goal > 0:
+            months_to_goal = max(0, (remaining / avg_monthly_income)) if avg_monthly_income > 0 else float('inf')
+            current_month_num = MONTHS.index(active_income_months[-1]) + 1
+            goal_month_num = current_month_num + int(months_to_goal)
+            if goal_month_num <= 16:  # within the Sep25-Dec26 window
+                goal_eta = f"~{MONTHS[min(goal_month_num - 1, 11)][:3]} {CURRENT_YEAR}" if goal_month_num <= 12 else "On track"
+            else:
+                goal_eta = "After Dec 2026"
+        else:
+            goal_eta = "No goal set"
+
+        k1, k2, k3, k4 = st.columns(4)
+        with k1:
+            metric_card('Avg Monthly Income', avg_monthly_income,
+                        sub=f'Based on {len(active_income_months)} months', color_class='accent')
+        with k2:
+            metric_card('Avg Monthly Expenses', avg_monthly_expenses,
+                        sub=f'Based on {len(active_expense_months)} months')
+        with k3:
+            net_cls = 'positive' if avg_monthly_net >= 0 else 'negative'
+            metric_card('Avg Monthly Net', avg_monthly_net,
+                        sub='Income minus expenses', color_class=net_cls)
+        with k4:
+            st.markdown(f"""
+            <div class="card">
+                <div class="card-label">Projected Year-End Net</div>
+                <div class="card-value {'positive' if projected_net_eoy >= 0 else 'negative'}">{fmt_eur(projected_net_eoy)}</div>
+                <div class="card-sub">Goal ETA: {goal_eta}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Projection chart
+        actual_income = [ov_dict.get(m, 0) for m in MONTHS]
+        projected = []
+        for i, m in enumerate(MONTHS):
+            if ov_dict.get(m, 0) > 0:
+                projected.append(None)
+            else:
+                projected.append(avg_monthly_income)
+
+        fig_proj = go.Figure()
+        fig_proj.add_trace(go.Bar(
+            name='Actual Income', x=[m[:3] for m in MONTHS],
+            y=actual_income,
+            marker_color=C_ORANGE,
+            marker=dict(cornerradius=4),
+        ))
+        fig_proj.add_trace(go.Bar(
+            name='Projected Income', x=[m[:3] for m in MONTHS],
+            y=projected,
+            marker_color='rgba(232,93,38,0.25)',
+            marker=dict(cornerradius=4, line=dict(color=C_ORANGE, width=1)),
+        ))
+        fig_proj.update_layout(
+            barmode='stack', bargap=0.25,
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        )
+        dark_layout(fig_proj, height=320)
+        st.plotly_chart(fig_proj, use_container_width=True)
+    else:
+        st.info("No income data yet — projections will appear once you have at least one month of data.")
+
 
 # ─── TAB 5 — 2025 ───────────────────────────────────────────────────────────
 
@@ -1701,11 +1939,13 @@ def get_exchange_rate(from_currency, to_currency='EUR'):
 
 
 def extract_pdf_data(uploaded_file):
-    """Extract date, amount, vendor, and category from a PDF invoice."""
-    result = {'date': None, 'netto': 0.0, 'vendor': '', 'currency': 'EUR', 'category': None}
+    """Extract date, amount, vendor, and category from a PDF invoice.
+    Returns dict with '_warnings' list for extraction feedback."""
+    result = {'date': None, 'netto': 0.0, 'vendor': '', 'currency': 'EUR', 'category': None, '_warnings': []}
     try:
         import pdfplumber
     except ImportError:
+        result['_warnings'].append('pdfplumber not installed — cannot extract data from PDF')
         return result
 
     try:
@@ -1713,9 +1953,11 @@ def extract_pdf_data(uploaded_file):
         with pdfplumber.open(uploaded_file) as pdf:
             text = '\n'.join(page.extract_text() or '' for page in pdf.pages)
     except Exception:
+        result['_warnings'].append('Could not read PDF — file may be corrupted or password-protected')
         return result
 
     if not text.strip():
+        result['_warnings'].append('PDF appears empty or is a scanned image — no text could be extracted')
         return result
 
     lines = text.split('\n')
@@ -1889,6 +2131,14 @@ def extract_pdf_data(uploaded_file):
         if keyword in text_lower:
             result['category'] = category
             break
+
+    # ── EXTRACTION WARNINGS ──────────────────────────────────────────
+    if result['netto'] == 0.0:
+        result['_warnings'].append('Could not extract amount — please enter manually')
+    if result['date'] is None:
+        result['_warnings'].append('Could not extract date — please select manually')
+    if not result['vendor']:
+        result['_warnings'].append('Could not identify vendor — please enter manually')
 
     return result
 
@@ -2878,6 +3128,11 @@ def upload_expense_dialog():
 
     extracted = extract_pdf_data(uploaded)
 
+    # PDF extraction feedback (#4)
+    if extracted.get('_warnings'):
+        for w in extracted['_warnings']:
+            st.warning(w, icon="\u26a0\ufe0f")
+
     st.markdown("---")
     st.markdown("**Expense Details** *(edit as needed)*")
 
@@ -2949,6 +3204,26 @@ def upload_expense_dialog():
 
     notes = st.text_input("Notes (optional)", key='exp_notes')
 
+    # Duplicate detection (#8)
+    _dup_warning = None
+    try:
+        expenses_df = load_data().get('expenses', pd.DataFrame())
+        if len(expenses_df) and recipient.strip():
+            dup_mask = (
+                (expenses_df['Recipient'].str.lower() == recipient.strip().lower())
+                & (expenses_df['Netto (€)'].round(2) == round(netto, 2))
+            )
+            if 'Date of Payment' in expenses_df.columns:
+                exp_dt_check = datetime(expense_date.year, expense_date.month, expense_date.day)
+                dup_mask = dup_mask & (expenses_df['Date of Payment'] == pd.Timestamp(exp_dt_check))
+            if dup_mask.any():
+                _dup_warning = f"Similar expense already exists: {recipient.strip()} | {fmt_eur(netto)} on {expense_date.strftime('%d.%m.%Y')}"
+    except Exception:
+        pass
+
+    if _dup_warning:
+        st.warning(f"Possible duplicate: {_dup_warning}", icon="\u26a0\ufe0f")
+
     if st.button("Save Expense", type="primary", use_container_width=True):
         if not recipient.strip():
             st.error("Recipient is required.")
@@ -2975,6 +3250,7 @@ def upload_expense_dialog():
             })
             _invalidate_data_caches()
 
+        _log_activity('Expense Added', f"{recipient.strip()} | {category} | {fmt_eur(netto)}")
         st.success(f"Expense saved! PDF uploaded as: `{saved_path}`")
         st.balloons()
 
@@ -3026,12 +3302,60 @@ def delete_expense_dialog(expense):
                 success = delete_expense_from_excel(invoice_id)
                 if success:
                     _invalidate_data_caches()
+                    _log_activity('Expense Deleted', f"ID {invoice_id} | {expense.get('Recipient', '')} | {fmt_eur(expense.get('Netto (€)', 0))}")
                     st.success("Expense deleted successfully.")
                     import time; time.sleep(0.5)
                     st.session_state['_return_to_expenses'] = True
                     st.rerun()
                 else:
                     st.error("Could not find the expense row in the spreadsheet.")
+
+
+@st.dialog("Mark Invoice as Paid")
+def mark_invoice_paid_dialog(invoice_data):
+    """Move an unpaid invoice to paid: update sheet row + rename PDF on Drive."""
+    inv_num = str(invoice_data.get('Invoice Number', ''))
+    client = str(invoice_data.get('Client', ''))
+    netto = pd.to_numeric(invoice_data.get('Netto (€)', 0), errors='coerce')
+
+    st.markdown("**Mark this invoice as paid?**")
+    st.markdown(f"""
+- **Invoice:** {inv_num}
+- **Client:** {client}
+- **Amount:** {fmt_eur(netto)}
+""")
+    st.info("This will move the invoice to the Paid section and rename the PDF on Google Drive (remove `notpaid_` prefix).")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Cancel", use_container_width=True, key='mark_paid_cancel'):
+            st.rerun()
+    with col2:
+        if st.button("Mark as Paid", type="primary", use_container_width=True, key='mark_paid_confirm'):
+            with st.spinner("Updating..."):
+                # 1. Move row in spreadsheet
+                ok = update_invoice_status_in_excel(inv_num, 'paid')
+                # 2. Rename PDF on Drive (remove notpaid_ prefix)
+                try:
+                    inv_folder_id = _get_invoices_folder_id()
+                    if inv_folder_id:
+                        inv_key = str(int(float(inv_num))) if str(inv_num).replace('.', '').isdigit() else str(inv_num).strip()
+                        files = _drive_list_files(inv_folder_id)
+                        for f in files:
+                            if f['name'].lower().startswith('notpaid_') and inv_key in f['name']:
+                                new_name = f['name'].replace('notpaid_', '', 1)
+                                _drive_rename_file(f['id'], new_name)
+                                break
+                except Exception:
+                    pass  # PDF rename is best-effort
+                _invalidate_data_caches()
+                if ok:
+                    _log_activity('Invoice Marked Paid', f"#{inv_num} | {client} | {fmt_eur(netto)}")
+                    st.success("Invoice marked as paid!")
+                else:
+                    st.warning("PDF renamed but could not move spreadsheet row. Please check manually.")
+                import time; time.sleep(0.8)
+                st.rerun()
 
 
 @st.dialog("Delete Invoice")
@@ -3060,6 +3384,7 @@ def delete_income_invoice_dialog(invoice_data, status):
                 remove_invoice_from_excel(inv_num)
                 _delete_invoice_pdf(inv_num)
                 _invalidate_data_caches()
+                _log_activity('Invoice Deleted', f"#{inv_num} | {client} | {fmt_eur(netto)}")
                 st.rerun()
 
 
@@ -3180,6 +3505,7 @@ def edit_expense_dialog(expense):
 
                 if success:
                     _invalidate_data_caches()
+                    _log_activity('Expense Edited', f"ID {invoice_id} | {new_recipient.strip()} | {fmt_eur(new_netto)}")
                     st.success("Expense updated successfully.")
                     import time; time.sleep(0.5)
                     st.session_state['_return_to_expenses'] = True
@@ -3387,6 +3713,7 @@ def sync_invoices_dialog():
                         errors += 1
 
                 _invalidate_data_caches()
+                _log_activity('Sync Applied', f"{success} change(s) applied, {errors} error(s)")
                 if errors:
                     st.warning(f"Applied {success} change(s). {errors} could not be applied.")
                 else:
@@ -3499,6 +3826,21 @@ def main():
         tab_goal(data)
     with t5:
         tab_2025(data)
+
+    # ── Activity Log (#10) ──
+    log_entries = _load_activity_log()
+    if log_entries:
+        with st.expander(f"Activity Log ({len(log_entries)} entries)", expanded=False):
+            log_html = '<div style="font-size:0.78rem;font-family:monospace;color:#ccc;max-height:300px;overflow-y:auto">'
+            for entry in log_entries[:50]:
+                log_html += (
+                    f'<div style="padding:0.25rem 0;border-bottom:1px solid rgba(255,255,255,0.05)">'
+                    f'<span style="color:rgba(255,255,255,0.35)">{entry["timestamp"]}</span> '
+                    f'<span style="color:{C_ORANGE}">{entry["action"]}</span> '
+                    f'<span>{entry["details"]}</span></div>'
+                )
+            log_html += '</div>'
+            st.markdown(log_html, unsafe_allow_html=True)
 
     # ── Footer ──
     st.markdown(f"""

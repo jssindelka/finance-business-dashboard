@@ -103,17 +103,16 @@ def _get_google_creds():
 
     # ── Streamlit Cloud: read credentials from st.secrets ──
     if 'google_credentials' in st.secrets:
-        td = dict(st.secrets['google_credentials'])
+        sec = st.secrets['google_credentials']
         creds = Credentials(
-            token=td.get('token') or None,  # empty string → None to force refresh
-            refresh_token=td['refresh_token'],
-            token_uri=td['token_uri'],
-            client_id=td['client_id'],
-            client_secret=td['client_secret'],
-            scopes=list(td.get('scopes', _default_scopes)),
+            token=None,
+            refresh_token=str(sec['refresh_token']),
+            token_uri=str(sec['token_uri']),
+            client_id=str(sec['client_id']),
+            client_secret=str(sec['client_secret']),
+            scopes=_default_scopes,
         )
-        if not creds.valid:
-            creds.refresh(Request())
+        creds.refresh(Request())
         return creds
 
     # ── Local dev: read from token.json ──
@@ -675,7 +674,7 @@ def load_data():
     try:
         sh = _gsheet()
     except Exception as e:
-        st.error(f"Cannot connect to Google Sheet: {e}")
+        st.error(f"Cannot connect to Google Sheet: {type(e).__name__}: {e}")
         st.stop()
 
     data = {}

@@ -9,11 +9,9 @@ Run:  streamlit run dashboard.py
 
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
 from datetime import datetime
-from copy import copy
 import re
 import os
 import json
@@ -30,6 +28,7 @@ from googleapiclient.http import MediaIoBaseUpload
 SHEET_ID = '1aLRvXRf9ni6i7u6WzcEk9psoTwa9XQNJQZ3jS-nXUj4'
 DRIVE_ROOT_FOLDER = '1s3EXNwPn47Rg2Ca2lPtBMBtHLEQHhtx7'
 _TOKEN_FILE = Path(__file__).parent / 'token.json'
+CURRENT_YEAR = 2026  # Change this (+ SHEET_ID) when starting a new year
 
 MONTHS = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -89,7 +88,12 @@ CATEGORY_FILE_MAP = {
     'Miles': 'Miles', 'Education': 'Education', 'Gear Rental': 'Gear_Rental',
     'Travel Cost': 'Travel_Cost', 'Gewerbe': 'Gewerbe',
 }
-BASE_DIR = Path(__file__).parent / "2026"  # kept for legacy references only
+YEAR_FOLDER = str(CURRENT_YEAR)
+INVOICES_FOLDER = f"INVOICES {CURRENT_YEAR}"
+# Jan/Feb 2026 used 03_Regular Cost + 04_Irregular Cost subfolders.
+# From March 2026 onward, all expenses go into a single "Costs" subfolder.
+_LEGACY_COST_SUBFOLDERS = ['03_Regular Cost', '04_Irregular Cost']
+_NEW_COST_SUBFOLDER = 'Costs'
 
 
 # ─── Google API Helpers ──────────────────────────────────────────────────────
@@ -161,8 +165,9 @@ def _get_drive_service():
     return build('drive', 'v3', credentials=_get_google_creds())
 
 
+@st.cache_resource(ttl=300)
 def _gsheet():
-    """Return the gspread Spreadsheet object."""
+    """Return the gspread Spreadsheet object (cached 5 min)."""
     return _get_gspread_client().open_by_key(SHEET_ID)
 
 
@@ -227,6 +232,30 @@ def _drive_download_bytes(file_id):
     """Download file content from Drive as bytes."""
     drive = _get_drive_service()
     return drive.files().get_media(fileId=file_id).execute()
+
+
+def _get_year_folder():
+    """Get the Drive folder ID for the current year (e.g. '2026'). Cached."""
+    return _drive_find_folder(DRIVE_ROOT_FOLDER, YEAR_FOLDER)
+
+
+def _get_cost_subfolders(month_folder_id, month_name):
+    """Return list of cost subfolder IDs to scan for a given month.
+    Jan/Feb use legacy 03_Regular Cost + 04_Irregular Cost.
+    March onward uses the single 'Costs' subfolder.
+    """
+    # Check if 'Costs' subfolder exists (new structure)
+    costs_id = _drive_find_folder(month_folder_id, _NEW_COST_SUBFOLDER)
+    if costs_id:
+        return [(_NEW_COST_SUBFOLDER, costs_id)]
+    # Fall back to legacy subfolders (Jan/Feb)
+    result = []
+    for name in _LEGACY_COST_SUBFOLDERS:
+        fid = _drive_find_folder(month_folder_id, name)
+        if fid:
+            result.append((name, fid))
+    return result
+
 
 # ─── Page Config ─────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -687,6 +716,12 @@ st.markdown(f"""
 
 # ─── Data Loading ────────────────────────────────────────────────────────────
 
+def _invalidate_data_caches():
+    """Clear only the data-related caches after a mutation (save/delete/edit).
+    Preserves long-lived caches like _drive_find_folder and get_exchange_rate."""
+    load_data.clear()
+    _auto_scan_changes.clear()
+
 @st.cache_data(ttl=30)
 def load_data():
     """Load all data from Google Sheets with 30s cache."""
@@ -1097,7 +1132,15 @@ def tab_expenses(data):
     sorted_exp = df.sort_values('Date of Payment', ascending=False).reset_index(drop=True)
     total_count = len(sorted_exp)
 
-    for idx, (_, r) in enumerate(sorted_exp.iterrows(), 1):
+    # Pagination
+    PAGE_SIZE = 15
+    total_pages = max(1, (total_count + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = st.session_state.get('exp_page', 0)
+    page = min(page, total_pages - 1)
+    start_idx = page * PAGE_SIZE
+    page_df = sorted_exp.iloc[start_idx:start_idx + PAGE_SIZE]
+
+    for idx, (_, r) in enumerate(page_df.iterrows(), start_idx + 1):
         display_num = total_count - idx + 1
         date_str = ''
         if pd.notna(r.get('Date of Payment')):
@@ -1133,6 +1176,23 @@ def tab_expenses(data):
             if st.button("Delete", key=f"del_{inv_id}"):
                 delete_expense_dialog(r.to_dict())
             st.markdown('</div>', unsafe_allow_html=True)
+
+    # Pagination controls
+    if total_pages > 1:
+        pc1, pc2, pc3 = st.columns([1, 2, 1])
+        with pc1:
+            if page > 0 and st.button("← Prev", key='exp_prev'):
+                st.session_state['exp_page'] = page - 1
+                st.rerun()
+        with pc2:
+            st.markdown(
+                f'<div style="text-align:center;color:rgba(255,255,255,0.5);font-size:0.8rem;padding-top:0.4rem">'
+                f'Page {page + 1} of {total_pages} · {total_count} expenses</div>',
+                unsafe_allow_html=True)
+        with pc3:
+            if page < total_pages - 1 and st.button("Next →", key='exp_next'):
+                st.session_state['exp_page'] = page + 1
+                st.rerun()
 
 
 # ─── TAB 3 — Income ─────────────────────────────────────────────────────────
@@ -1838,13 +1898,12 @@ def save_expense_pdf(uploaded_file, date, category, recipient):
     month_num = date.month
     month_name = MONTHS[month_num - 1]
 
-    folder_2026 = _drive_find_folder.__wrapped__(DRIVE_ROOT_FOLDER, '2026')
-    if not folder_2026:
-        folder_2026 = _drive_get_or_create_folder(DRIVE_ROOT_FOLDER, '2026')
+    year_folder = _get_year_folder()
+    if not year_folder:
+        year_folder = _drive_get_or_create_folder(DRIVE_ROOT_FOLDER, YEAR_FOLDER)
     month_folder_name = f"{month_num:02d}_{month_name}_{date.year}"
-    month_folder = _drive_get_or_create_folder(folder_2026, month_folder_name)
-    cost_folder = _drive_get_or_create_folder(month_folder, '04_Irregular Cost')
-    _drive_get_or_create_folder(month_folder, '03_Regular Cost')
+    month_folder = _drive_get_or_create_folder(year_folder, month_folder_name)
+    cost_folder = _drive_get_or_create_folder(month_folder, _NEW_COST_SUBFOLDER)
 
     cat_code = CATEGORY_FILE_MAP.get(category, category.replace(' ', '_'))
     clean_recipient = re.sub(r'[^\w\s-]', '', recipient).strip().replace(' ', '_')
@@ -1868,6 +1927,7 @@ def find_expense_pdf(date, category, recipient):
     """Find a PDF on Google Drive for a given expense row.
 
     Returns dict {id, name, folder_id} if found, None otherwise.
+    Checks new 'Costs' subfolder first, then legacy subfolders for Jan/Feb.
     """
     if not isinstance(date, datetime):
         try:
@@ -1879,10 +1939,10 @@ def find_expense_pdf(date, category, recipient):
     month_name = MONTHS[month_num - 1]
     month_folder_name = f"{month_num:02d}_{month_name}_{date.year}"
 
-    folder_2026 = _drive_find_folder.__wrapped__(DRIVE_ROOT_FOLDER, '2026')
-    if not folder_2026:
+    year_folder = _get_year_folder()
+    if not year_folder:
         return None
-    month_folder = _drive_find_folder.__wrapped__(folder_2026, month_folder_name)
+    month_folder = _drive_find_folder(year_folder, month_folder_name)
     if not month_folder:
         return None
 
@@ -1890,10 +1950,7 @@ def find_expense_pdf(date, category, recipient):
     cat_code = CATEGORY_FILE_MAP.get(category, category.replace(' ', '_'))
     clean_recipient = re.sub(r'[^\w\s-]', '', recipient).strip().replace(' ', '_')
 
-    for subfolder_name in ['04_Irregular Cost', '03_Regular Cost']:
-        subfolder_id = _drive_find_folder.__wrapped__(month_folder, subfolder_name)
-        if not subfolder_id:
-            continue
+    for subfolder_name, subfolder_id in _get_cost_subfolders(month_folder, month_name):
         files = _drive_list_files(subfolder_id)
         for f in files:
             fname = f['name']
@@ -1971,12 +2028,12 @@ def rename_expense_pdf(old_pdf_info, new_date, new_category, new_recipient):
     new_month_num = new_date.month
     new_month_name = MONTHS[new_month_num - 1]
 
-    folder_2026 = _drive_find_folder.__wrapped__(DRIVE_ROOT_FOLDER, '2026')
-    if not folder_2026:
+    year_folder = _get_year_folder()
+    if not year_folder:
         return None
     month_folder_name = f"{new_month_num:02d}_{new_month_name}_{new_date.year}"
-    month_folder = _drive_get_or_create_folder(folder_2026, month_folder_name)
-    cost_folder = _drive_get_or_create_folder(month_folder, '04_Irregular Cost')
+    month_folder = _drive_get_or_create_folder(year_folder, month_folder_name)
+    cost_folder = _drive_get_or_create_folder(month_folder, _NEW_COST_SUBFOLDER)
 
     cat_code = CATEGORY_FILE_MAP.get(new_category, new_category.replace(' ', '_'))
     clean_recipient = re.sub(r'[^\w\s-]', '', new_recipient).strip().replace(' ', '_')
@@ -1989,15 +2046,12 @@ def rename_expense_pdf(old_pdf_info, new_date, new_category, new_recipient):
 
 # ─── Invoice Sync Helpers ────────────────────────────────────────────────────
 
-INVOICES_DIR = BASE_DIR / "INVOICES 2026"  # legacy reference
-
-
 def _get_invoices_folder_id():
-    """Get the Google Drive folder ID for INVOICES 2026."""
-    folder_2026 = _drive_find_folder.__wrapped__(DRIVE_ROOT_FOLDER, '2026')
-    if not folder_2026:
+    """Get the Google Drive folder ID for the invoices folder."""
+    year_folder = _get_year_folder()
+    if not year_folder:
         return None
-    return _drive_find_folder.__wrapped__(folder_2026, 'INVOICES 2026')
+    return _drive_find_folder(year_folder, INVOICES_FOLDER)
 
 
 def _extract_invoice_id_from_filename(filename):
@@ -2018,15 +2072,16 @@ def _extract_invoice_id_from_filename(filename):
 def _auto_scan_changes():
     """Cached auto-scan for Drive invoice + expense changes on page load."""
     changes = []
+    _scan_errors = []
     try:
         changes.extend(scan_invoice_changes())
-    except Exception:
-        pass
+    except Exception as e:
+        _scan_errors.append(f"Invoice scan: {type(e).__name__}: {e}")
     try:
         changes.extend(scan_expense_changes())
-    except Exception:
-        pass
-    return changes
+    except Exception as e:
+        _scan_errors.append(f"Expense scan: {type(e).__name__}: {e}")
+    return changes, _scan_errors
 
 
 def scan_invoice_changes():
@@ -2206,7 +2261,7 @@ def _keyword_score(file_stem, sheet_word_set):
     return exact * 10 + max(0, sub - exact)
 
 
-def scan_expense_changes():
+def scan_expense_changes(expenses_df=None):
     """Compare cost folders on Google Drive against Expenses sheet.
     Uses a monthly count-based approach: counts PDF files per month folder
     on Drive vs expense entries for that month in the sheet.
@@ -2215,16 +2270,19 @@ def scan_expense_changes():
       - SURPLUS (Drive > Sheet): new unregistered expenses
       - DEFICIT (Drive < Sheet): expense PDF deleted, entry should be removed
     Uses keyword matching to identify the specific entries involved.
+
+    If expenses_df is provided, reuses it instead of re-fetching from Sheets.
     """
     changes = []
-    folder_2026 = _drive_find_folder.__wrapped__(DRIVE_ROOT_FOLDER, '2026')
-    if not folder_2026:
+    year_folder = _get_year_folder()
+    if not year_folder:
         return changes
 
-    # Load sheet data
-    ws_exp = _gsheet().worksheet('Expenses')
-    exp_records = ws_exp.get_all_records()
-    expenses_df = pd.DataFrame(exp_records)
+    # Load sheet data (reuse if provided)
+    if expenses_df is None:
+        ws_exp = _gsheet().worksheet('Expenses')
+        exp_records = ws_exp.get_all_records()
+        expenses_df = pd.DataFrame(exp_records)
 
     # Group sheet entries by month with their keywords and row data
     sheet_by_month = {}  # month_name → list of {row_idx, keywords, row_data}
@@ -2242,8 +2300,8 @@ def scan_expense_changes():
             'row': row,
         })
 
-    # Scan all month folders in 2026/
-    month_folders = _drive_list_files(folder_2026)
+    # Scan all month folders
+    month_folders = _drive_list_files(year_folder)
     for mf in month_folders:
         if mf['mimeType'] != 'application/vnd.google-apps.folder':
             continue
@@ -2254,17 +2312,14 @@ def scan_expense_changes():
 
         # Collect all cost PDFs for this month
         drive_files = []
-        for cost_subfolder in ['03_Regular Cost', '04_Irregular Cost']:
-            sub_id = _drive_find_folder.__wrapped__(mf['id'], cost_subfolder)
-            if not sub_id:
-                continue
+        for cost_subfolder_name, sub_id in _get_cost_subfolders(mf['id'], month_name):
             files = _drive_list_files(sub_id)
             for f in files:
                 if f['name'].lower().endswith('.pdf'):
                     drive_files.append({
                         'name': f['name'],
                         'id': f['id'],
-                        'subfolder': cost_subfolder,
+                        'subfolder': cost_subfolder_name,
                     })
 
         drive_count = len(drive_files)
@@ -2918,7 +2973,7 @@ def upload_expense_dialog():
                 'brutto': brutto,
                 'notes': notes.strip(),
             })
-            st.cache_data.clear()
+            _invalidate_data_caches()
 
         st.success(f"Expense saved! PDF uploaded as: `{saved_path}`")
         st.balloons()
@@ -2970,7 +3025,7 @@ def delete_expense_dialog(expense):
                 # Delete from spreadsheet
                 success = delete_expense_from_excel(invoice_id)
                 if success:
-                    st.cache_data.clear()
+                    _invalidate_data_caches()
                     st.success("Expense deleted successfully.")
                     import time; time.sleep(0.5)
                     st.session_state['_return_to_expenses'] = True
@@ -3004,7 +3059,7 @@ def delete_income_invoice_dialog(invoice_data, status):
             with st.spinner("Deleting..."):
                 remove_invoice_from_excel(inv_num)
                 _delete_invoice_pdf(inv_num)
-                st.cache_data.clear()
+                _invalidate_data_caches()
                 st.rerun()
 
 
@@ -3124,7 +3179,7 @@ def edit_expense_dialog(expense):
                 })
 
                 if success:
-                    st.cache_data.clear()
+                    _invalidate_data_caches()
                     st.success("Expense updated successfully.")
                     import time; time.sleep(0.5)
                     st.session_state['_return_to_expenses'] = True
@@ -3135,7 +3190,7 @@ def edit_expense_dialog(expense):
 
 @st.dialog("Update", width="large")
 def sync_invoices_dialog():
-    """Scan INVOICES 2026/ and cost folders for changes and sync with spreadsheet."""
+    """Scan invoices and cost folders for changes and sync with spreadsheet."""
     with st.spinner("Scanning Google Drive for changes..."):
         changes = scan_invoice_changes()
         expense_changes = scan_expense_changes()
@@ -3155,7 +3210,7 @@ def sync_invoices_dialog():
     for c in expense_changes:
         if c['change_type'] == 'NEW_EXPENSE' and c.get('drive_file_id'):
             try:
-                pdf_bytes = _drive_download_file(c['drive_file_id'])
+                pdf_bytes = _drive_download_bytes(c['drive_file_id'])
                 import pdfplumber
                 with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
                     text = '\n'.join(page.extract_text() or '' for page in pdf.pages)
@@ -3309,7 +3364,7 @@ def sync_invoices_dialog():
                         continue
                     try:
                         # Parse date from filename date_str (DD.MM) + year from folder
-                        year = 2026
+                        year = CURRENT_YEAR
                         m_folder = re.match(r'^(\d{2})_(\w+)_(\d{4})$', c.get('month_folder', ''))
                         if m_folder:
                             year = int(m_folder.group(3))
@@ -3331,7 +3386,7 @@ def sync_invoices_dialog():
                     except Exception:
                         errors += 1
 
-                st.cache_data.clear()
+                _invalidate_data_caches()
                 if errors:
                     st.warning(f"Applied {success} change(s). {errors} could not be applied.")
                 else:
@@ -3370,7 +3425,10 @@ def main():
                 unsafe_allow_html=True)
 
     # ── Auto-scan for invoice changes on refresh ──
-    auto_changes = _auto_scan_changes()
+    auto_changes, scan_errors = _auto_scan_changes()
+    if scan_errors:
+        for err in scan_errors:
+            st.warning(f"Scan error: {err}", icon="\u26a0\ufe0f")
     if auto_changes:
         n_status = sum(1 for c in auto_changes if c['change_type'] == 'STATUS')
         n_new = sum(1 for c in auto_changes if c['change_type'] == 'NEW')

@@ -105,14 +105,14 @@ def _get_google_creds():
     if 'google_credentials' in st.secrets:
         td = dict(st.secrets['google_credentials'])
         creds = Credentials(
-            token=td.get('token'),
+            token=td.get('token') or None,  # empty string → None to force refresh
             refresh_token=td['refresh_token'],
             token_uri=td['token_uri'],
             client_id=td['client_id'],
             client_secret=td['client_secret'],
             scopes=list(td.get('scopes', _default_scopes)),
         )
-        if creds.expired or not creds.valid:
+        if not creds.valid:
             creds.refresh(Request())
         return creds
 

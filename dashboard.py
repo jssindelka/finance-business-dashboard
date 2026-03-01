@@ -150,11 +150,9 @@ def _get_gspread_client():
         # AuthorizedSession not attaching the token on Python 3.13
         import requests as _req
         from gspread import Client
-        from gspread.http_client import HTTPClient
         session = _req.Session()
         session.headers['Authorization'] = f'Bearer {creds.token}'
-        http_client = HTTPClient(auth=creds, session=session)
-        return Client(auth=creds, http_client=http_client)
+        return Client(auth=creds, session=session)
     return gspread.authorize(creds)
 
 

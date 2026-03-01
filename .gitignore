@@ -1,0 +1,26 @@
+# Credentials (NEVER commit these)
+token.json
+client_secret*.json
+*.pickle
+
+# Streamlit secrets (local dev only)
+.streamlit/secrets.toml
+
+# Legacy local data folders (data lives on Google Drive now)
+2025/
+2026/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

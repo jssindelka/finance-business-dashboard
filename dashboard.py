@@ -1090,76 +1090,6 @@ def tab_overview(data):
     chart_card_html('Monthly Breakdown',
                     html_table(['Month', 'Income', 'Expenses', 'Profit / Loss'], rows, num_cols={1, 2, 3}))
 
-    # --- Tax / VAT Estimate (#7) ---
-    section_title('Tax & VAT Estimate')
-
-    # Calculate deductible expenses (all business expenses are deductible)
-    taxable_income = total_income - total_expenses
-    est_income_tax = max(0, taxable_income * TAX_RATE_INCOME)
-    est_vat = total_income * VAT_RATE  # VAT on gross income (simplified: Soll-Versteuerung)
-    vat_deductible = total_expenses * VAT_RATE  # Input VAT from expenses (Vorsteuer)
-    net_vat = max(0, est_vat - vat_deductible)
-    total_tax_burden = est_income_tax + net_vat
-    after_tax = total_income - total_expenses - total_tax_burden
-
-    tk1, tk2, tk3, tk4 = st.columns(4)
-    with tk1:
-        st.markdown(f"""
-        <div class="card">
-            <div class="card-label">Taxable Profit</div>
-            <div class="card-value {'positive' if taxable_income >= 0 else 'negative'}">{fmt_eur(taxable_income)}</div>
-            <div class="card-sub">Income minus deductible expenses</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with tk2:
-        st.markdown(f"""
-        <div class="card">
-            <div class="card-label">Est. Income Tax (~{TAX_RATE_INCOME:.0%})</div>
-            <div class="card-value negative">{fmt_eur(est_income_tax)}</div>
-            <div class="card-sub">Set aside for Einkommensteuer</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with tk3:
-        st.markdown(f"""
-        <div class="card">
-            <div class="card-label">Net VAT / Umsatzsteuer</div>
-            <div class="card-value negative">{fmt_eur(net_vat)}</div>
-            <div class="card-sub">{fmt_eur(est_vat)} output \u2212 {fmt_eur(vat_deductible)} input</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with tk4:
-        st.markdown(f"""
-        <div class="card" style="border-color: rgba(232,93,38,0.2); background: linear-gradient(135deg, {C_SURFACE} 0%, rgba(232,93,38,0.04) 100%);">
-            <div class="card-label">After-Tax Estimate</div>
-            <div class="card-value {'positive' if after_tax >= 0 else 'negative'}">{fmt_eur(after_tax)}</div>
-            <div class="card-sub">Total tax burden: {fmt_eur(total_tax_burden)}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # Quarterly VAT breakdown
-    quarters = [
-        ('Q1 (Jan-Mar)', ['January', 'February', 'March']),
-        ('Q2 (Apr-Jun)', ['April', 'May', 'June']),
-        ('Q3 (Jul-Sep)', ['July', 'August', 'September']),
-        ('Q4 (Oct-Dec)', ['October', 'November', 'December']),
-    ]
-    q_rows = []
-    for q_name, q_months in quarters:
-        q_income = sum(overview.loc[overview['Month'] == m, 'Income'].sum() for m in q_months)
-        q_expenses = sum(overview.loc[overview['Month'] == m, 'Expenses'].sum() for m in q_months)
-        if q_income > 0 or q_expenses > 0:
-            q_vat_out = q_income * VAT_RATE
-            q_vat_in = q_expenses * VAT_RATE
-            q_net_vat = max(0, q_vat_out - q_vat_in)
-            q_rows.append({
-                'Quarter': q_name,
-                'Income': fmt_eur(q_income),
-                'Expenses': fmt_eur(q_expenses),
-                'VAT Due': fmt_eur(q_net_vat),
-            })
-    if q_rows:
-        chart_card_html('Quarterly VAT Summary',
-                        html_table(['Quarter', 'Income', 'Expenses', 'VAT Due'], q_rows, num_cols={1, 2, 3}))
 
 
 # ─── TAB 2 — Expenses ───────────────────────────────────────────────────────
@@ -1779,7 +1709,179 @@ def tab_goal(data):
         st.info("No income data yet — projections will appear once you have at least one month of data.")
 
 
-# ─── TAB 5 — 2025 ───────────────────────────────────────────────────────────
+# ─── TAB 5 — Taxes ──────────────────────────────────────────────────────────
+
+def tab_taxes(data):
+    overview = data['overview']
+    total_income = overview['Income'].sum()
+    total_expenses = overview['Expenses'].sum()
+
+    if total_income == 0 and total_expenses == 0:
+        st.info("No financial data yet — tax estimates will appear once you have income or expenses.")
+        return
+
+    # --- KPI Cards ---
+    taxable_income = total_income - total_expenses
+    est_income_tax = max(0, taxable_income * TAX_RATE_INCOME)
+    est_vat = total_income * VAT_RATE
+    vat_deductible = total_expenses * VAT_RATE
+    net_vat = max(0, est_vat - vat_deductible)
+    total_tax_burden = est_income_tax + net_vat
+    after_tax = total_income - total_expenses - total_tax_burden
+
+    tk1, tk2, tk3, tk4 = st.columns(4)
+    with tk1:
+        st.markdown(f"""
+        <div class="card">
+            <div class="card-label">Taxable Profit</div>
+            <div class="card-value {'positive' if taxable_income >= 0 else 'negative'}">{fmt_eur(taxable_income)}</div>
+            <div class="card-sub">Income minus deductible expenses</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with tk2:
+        st.markdown(f"""
+        <div class="card">
+            <div class="card-label">Est. Income Tax (~{TAX_RATE_INCOME:.0%})</div>
+            <div class="card-value negative">{fmt_eur(est_income_tax)}</div>
+            <div class="card-sub">Set aside for Einkommensteuer</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with tk3:
+        st.markdown(f"""
+        <div class="card">
+            <div class="card-label">Net VAT / Umsatzsteuer</div>
+            <div class="card-value negative">{fmt_eur(net_vat)}</div>
+            <div class="card-sub">{fmt_eur(est_vat)} output \u2212 {fmt_eur(vat_deductible)} input</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with tk4:
+        st.markdown(f"""
+        <div class="card" style="border-color: rgba(232,93,38,0.2); background: linear-gradient(135deg, {C_SURFACE} 0%, rgba(232,93,38,0.04) 100%);">
+            <div class="card-label">After-Tax Estimate</div>
+            <div class="card-value {'positive' if after_tax >= 0 else 'negative'}">{fmt_eur(after_tax)}</div>
+            <div class="card-sub">Total tax burden: {fmt_eur(total_tax_burden)}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # --- Quarterly VAT Summary ---
+    section_title('Quarterly VAT Summary')
+
+    quarters = [
+        ('Q1 (Jan-Mar)', ['January', 'February', 'March']),
+        ('Q2 (Apr-Jun)', ['April', 'May', 'June']),
+        ('Q3 (Jul-Sep)', ['July', 'August', 'September']),
+        ('Q4 (Oct-Dec)', ['October', 'November', 'December']),
+    ]
+    q_rows = []
+    for q_name, q_months in quarters:
+        q_income = sum(overview.loc[overview['Month'] == m, 'Income'].sum() for m in q_months)
+        q_expenses = sum(overview.loc[overview['Month'] == m, 'Expenses'].sum() for m in q_months)
+        if q_income > 0 or q_expenses > 0:
+            q_vat_out = q_income * VAT_RATE
+            q_vat_in = q_expenses * VAT_RATE
+            q_net_vat = max(0, q_vat_out - q_vat_in)
+            q_rows.append({
+                'Quarter': q_name,
+                'Income': fmt_eur(q_income),
+                'Expenses': fmt_eur(q_expenses),
+                'VAT Output': fmt_eur(q_vat_out),
+                'VAT Input': fmt_eur(q_vat_in),
+                'VAT Due': fmt_eur(q_net_vat),
+            })
+    if q_rows:
+        chart_card_html('Quarterly VAT Breakdown',
+                        html_table(['Quarter', 'Income', 'Expenses', 'VAT Output', 'VAT Input', 'VAT Due'],
+                                   q_rows, num_cols={1, 2, 3, 4, 5}))
+
+    # --- Monthly Tax Breakdown ---
+    section_title('Monthly Tax Breakdown')
+
+    active = overview[(overview['Income'] > 0) | (overview['Expenses'] > 0)]
+    m_rows = []
+    for _, r in active.iterrows():
+        m_inc = r['Income']
+        m_exp = r['Expenses']
+        m_profit = m_inc - m_exp
+        m_tax = max(0, m_profit * TAX_RATE_INCOME)
+        m_vat_out = m_inc * VAT_RATE
+        m_vat_in = m_exp * VAT_RATE
+        m_vat_net = max(0, m_vat_out - m_vat_in)
+        m_rows.append({
+            'Month': r['Month'],
+            'Income': fmt_eur(m_inc),
+            'Expenses': fmt_eur(m_exp),
+            'Profit': f'<span class="num {"positive" if m_profit >= 0 else "negative"}">{fmt_eur(m_profit)}</span>',
+            'Income Tax': fmt_eur(m_tax),
+            'Net VAT': fmt_eur(m_vat_net),
+        })
+    # Totals
+    m_rows.append({
+        'Month': 'Totals',
+        'Income': fmt_eur(total_income),
+        'Expenses': fmt_eur(total_expenses),
+        'Profit': f'<span class="num {"positive" if taxable_income >= 0 else "negative"}">{fmt_eur(taxable_income)}</span>',
+        'Income Tax': fmt_eur(est_income_tax),
+        'Net VAT': fmt_eur(net_vat),
+        '_total': True,
+    })
+    chart_card_html('Monthly Tax Detail',
+                    html_table(['Month', 'Income', 'Expenses', 'Profit', 'Income Tax', 'Net VAT'],
+                               m_rows, num_cols={1, 2, 3, 4, 5}))
+
+    # --- Year-End Projection ---
+    active_months = len(active)
+    if active_months > 0:
+        section_title('Year-End Tax Projection')
+
+        avg_income = total_income / active_months
+        avg_expenses = total_expenses / active_months
+        months_remaining = 12 - active_months
+
+        proj_income = total_income + avg_income * months_remaining
+        proj_expenses = total_expenses + avg_expenses * months_remaining
+        proj_profit = proj_income - proj_expenses
+        proj_income_tax = max(0, proj_profit * TAX_RATE_INCOME)
+        proj_vat = max(0, proj_income * VAT_RATE - proj_expenses * VAT_RATE)
+        proj_total_tax = proj_income_tax + proj_vat
+
+        pk1, pk2, pk3, pk4 = st.columns(4)
+        with pk1:
+            metric_card('Projected Income', proj_income,
+                        sub=f'Based on {active_months} months avg', color_class='accent')
+        with pk2:
+            metric_card('Projected Expenses', proj_expenses,
+                        sub=f'{months_remaining} months remaining')
+        with pk3:
+            st.markdown(f"""
+            <div class="card">
+                <div class="card-label">Projected Income Tax</div>
+                <div class="card-value negative">{fmt_eur(proj_income_tax)}</div>
+                <div class="card-sub">~{TAX_RATE_INCOME:.0%} of projected profit</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with pk4:
+            st.markdown(f"""
+            <div class="card" style="border-color: rgba(232,93,38,0.2); background: linear-gradient(135deg, {C_SURFACE} 0%, rgba(232,93,38,0.04) 100%);">
+                <div class="card-label">Total Tax Burden (Projected)</div>
+                <div class="card-value negative">{fmt_eur(proj_total_tax)}</div>
+                <div class="card-sub">Income tax + VAT for full year</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    # --- Tax rates info ---
+    st.markdown(f"""
+    <div style="margin-top:1.5rem;padding:0.8rem 1rem;background:{C_SURFACE2};border-radius:8px;
+                border:1px solid {C_BORDER};font-size:0.78rem;color:{C_MUTED}">
+        <strong style="color:{C_TEXT}">Tax Rates Used:</strong>
+        Income Tax: {TAX_RATE_INCOME:.0%} (combined Einkommensteuer + Soli) &middot;
+        VAT: {VAT_RATE:.0%} (Umsatzsteuer) &middot;
+        These are estimates only &mdash; consult your Steuerberater for exact figures.
+        Rates can be adjusted in the dashboard configuration (TAX_RATE_INCOME, VAT_RATE).
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ─── TAB 6 — 2025 ───────────────────────────────────────────────────────────
 
 def tab_2025(data):
     m2025 = _parse_2025_monthly(data.get('hist_2025'))
@@ -3798,11 +3900,12 @@ def main():
         ).sum()
 
     # ── Tabs ──
-    t1, t2, t3, t4, t5 = st.tabs([
+    t1, t2, t3, t4, t5, t6 = st.tabs([
         'OVERVIEW',
         'EXPENSES',
         'INCOME',
         'GOAL TRACKER',
+        'TAXES',
         '2025',
     ])
 
@@ -3825,6 +3928,8 @@ def main():
     with t4:
         tab_goal(data)
     with t5:
+        tab_taxes(data)
+    with t6:
         tab_2025(data)
 
     # ── Activity Log (#10) ──

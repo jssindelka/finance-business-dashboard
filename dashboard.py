@@ -693,9 +693,7 @@ def load_data():
     try:
         sh = _gsheet()
     except Exception as e:
-        import traceback
         st.error(f"Cannot connect to Google Sheet: {type(e).__name__}: {e}")
-        st.code(traceback.format_exc())
         st.stop()
 
     data = {}
@@ -2018,11 +2016,17 @@ def _extract_invoice_id_from_filename(filename):
 
 @st.cache_data(ttl=30)
 def _auto_scan_changes():
-    """Cached auto-scan for Drive invoice changes on page load."""
+    """Cached auto-scan for Drive invoice + expense changes on page load."""
+    changes = []
     try:
-        return scan_invoice_changes()
+        changes.extend(scan_invoice_changes())
     except Exception:
-        return []
+        pass
+    try:
+        changes.extend(scan_expense_changes())
+    except Exception:
+        pass
+    return changes
 
 
 def scan_invoice_changes():
@@ -2139,6 +2143,163 @@ def scan_invoice_changes():
     type_order = {'STATUS': 0, 'NEW': 1, 'MISSING': 2}
     changes.sort(key=lambda c: type_order.get(c['change_type'], 99))
 
+    return changes
+
+
+# Reverse map: filename code → category name (e.g. 'AI_Software' → 'AI Software')
+_FILE_TO_CATEGORY = {v.lower(): k for k, v in CATEGORY_FILE_MAP.items()}
+
+
+def _parse_expense_filename(filename):
+    """Parse an expense PDF filename like '02.01._Insurance_Zurich.pdf'.
+    Returns dict {date_str, day, month, category, recipient} or None.
+    """
+    stem = filename[:-4] if filename.lower().endswith('.pdf') else filename
+    # Expected: DD.MM._Category_Recipient  or  DD.MM._Category  or  DD.MM_Category_Recipient
+    m = re.match(r'^(\d{1,2})\.(\d{1,2})\.?_(.+)$', stem)
+    if not m:
+        return None
+    day, month_num = int(m.group(1)), int(m.group(2))
+    rest = m.group(3)
+    # Split rest by underscore — first part is category, rest is recipient
+    # But category itself can contain underscores (e.g. AI_Software, Gear_Rental, Travel_Cost)
+    # Try longest category match first
+    rest_lower = rest.lower()
+    matched_cat = None
+    matched_rest = rest
+    for file_code, cat_name in sorted(_FILE_TO_CATEGORY.items(), key=lambda x: -len(x[0])):
+        if rest_lower.startswith(file_code):
+            matched_cat = cat_name
+            matched_rest = rest[len(file_code):]
+            if matched_rest.startswith('_'):
+                matched_rest = matched_rest[1:]
+            break
+    if not matched_cat:
+        # Fall back: first segment is category
+        parts = rest.split('_', 1)
+        matched_cat = parts[0].replace('_', ' ')
+        matched_rest = parts[1] if len(parts) > 1 else ''
+    recipient = matched_rest.replace('_', ' ').strip()
+    return {
+        'date_str': f"{day:02d}.{month_num:02d}",
+        'day': day,
+        'month_num': month_num,
+        'category': matched_cat,
+        'recipient': recipient,
+        'filename_stem': stem,
+    }
+
+
+def scan_expense_changes():
+    """Compare cost folders on Google Drive against Expenses sheet.
+    Scans 2026/MM_MonthName_2026/03_Regular Cost/ and 04_Irregular Cost/
+    Detects:
+      - NEW: PDF in Drive but no matching entry in Expenses sheet
+      - MISSING: Sheet entry has no matching PDF in Drive
+    Returns list of dicts with change_type plus details.
+    """
+    changes = []
+    folder_2026 = _drive_find_folder.__wrapped__(DRIVE_ROOT_FOLDER, '2026')
+    if not folder_2026:
+        return changes
+
+    # Load expenses from sheet
+    ws_exp = _gsheet().worksheet('Expenses')
+    exp_records = ws_exp.get_all_records()
+    expenses_df = pd.DataFrame(exp_records)
+    if 'Date of Payment' in expenses_df.columns:
+        expenses_df['Date of Payment'] = pd.to_datetime(
+            expenses_df['Date of Payment'], dayfirst=True, errors='coerce')
+
+    # Build a set of "fingerprints" for matching: (DD.MM, category_lower, recipient_lower)
+    sheet_fingerprints = {}
+    for idx, row in expenses_df.iterrows():
+        dt = row.get('Date of Payment')
+        if pd.isna(dt):
+            continue
+        date_key = f"{dt.day:02d}.{dt.month:02d}"
+        cat = str(row.get('Category', '')).strip().lower()
+        recip = str(row.get('Recipient', '')).strip().lower()
+        fp = (date_key, cat, recip)
+        sheet_fingerprints[fp] = {
+            'id': row.get('ID', ''),
+            'date': dt,
+            'category': str(row.get('Category', '')),
+            'recipient': str(row.get('Recipient', '')),
+            'netto': pd.to_numeric(_clean_currency(row.get('Netto (€)', 0)), errors='coerce') or 0,
+            'month': str(row.get('Month', '')),
+            'matched': False,
+        }
+
+    # Scan all month folders in 2026/
+    month_folders = _drive_list_files(folder_2026)
+    for mf in month_folders:
+        if mf['mimeType'] != 'application/vnd.google-apps.folder':
+            continue
+        # e.g. "01_January_2026"
+        if not re.match(r'^\d{2}_\w+_\d{4}$', mf['name']):
+            continue
+
+        for cost_subfolder in ['03_Regular Cost', '04_Irregular Cost']:
+            sub_id = _drive_find_folder.__wrapped__(mf['id'], cost_subfolder)
+            if not sub_id:
+                continue
+            files = _drive_list_files(sub_id)
+            for f in files:
+                if not f['name'].lower().endswith('.pdf'):
+                    continue
+                parsed = _parse_expense_filename(f['name'])
+                if not parsed:
+                    continue
+
+                # Try to match against sheet
+                fp = (parsed['date_str'], parsed['category'].lower(),
+                      parsed['recipient'].lower())
+                # Also try partial recipient match (sheet may have shorter name)
+                matched = False
+                for sheet_fp, info in sheet_fingerprints.items():
+                    if sheet_fp[0] != fp[0] or sheet_fp[1] != fp[1]:
+                        continue
+                    # Fuzzy recipient: check if one contains the other
+                    if (fp[2] and sheet_fp[2] and
+                            (fp[2] in sheet_fp[2] or sheet_fp[2] in fp[2])):
+                        info['matched'] = True
+                        matched = True
+                        break
+                    # Exact match (including both empty)
+                    if fp[2] == sheet_fp[2]:
+                        info['matched'] = True
+                        matched = True
+                        break
+
+                if not matched:
+                    changes.append({
+                        'change_type': 'NEW_EXPENSE',
+                        'filename': f['name'],
+                        'folder': f"{mf['name']}/{cost_subfolder}",
+                        'category': parsed['category'],
+                        'recipient': parsed['recipient'],
+                        'date_str': parsed['date_str'],
+                        'month_folder': mf['name'],
+                        'drive_file_id': f['id'],
+                    })
+
+    # MISSING: sheet entries with no matching PDF
+    for fp, info in sheet_fingerprints.items():
+        if not info['matched'] and info['category'] and info['recipient']:
+            changes.append({
+                'change_type': 'MISSING_EXPENSE',
+                'filename': '',
+                'folder': '',
+                'category': info['category'],
+                'recipient': info['recipient'],
+                'date_str': fp[0],
+                'netto': info['netto'],
+                'month': info['month'],
+                'drive_file_id': None,
+            })
+
+    changes.sort(key=lambda c: (0 if c['change_type'] == 'NEW_EXPENSE' else 1, c.get('date_str', '')))
     return changes
 
 
@@ -2873,10 +3034,12 @@ def edit_expense_dialog(expense):
                     st.error("Could not find the expense row in the spreadsheet.")
 
 
-@st.dialog("Update Invoices", width="large")
+@st.dialog("Update", width="large")
 def sync_invoices_dialog():
-    """Scan INVOICES 2026/ for changes and sync with Excel."""
-    changes = scan_invoice_changes()
+    """Scan INVOICES 2026/ and cost folders for changes and sync with spreadsheet."""
+    with st.spinner("Scanning Google Drive for changes..."):
+        changes = scan_invoice_changes()
+        expense_changes = scan_expense_changes()
 
     # For NEW invoices, try to extract data from PDF
     for c in changes:
@@ -2889,9 +3052,33 @@ def sync_invoices_dialog():
             c['category'] = pdf_data.get('category', '') or ''
             c['project'] = pdf_data.get('project', '') or ''
 
-    if not changes:
+    # For NEW expenses, try to extract data from PDF
+    for c in expense_changes:
+        if c['change_type'] == 'NEW_EXPENSE' and c.get('drive_file_id'):
+            try:
+                pdf_bytes = _drive_download_file(c['drive_file_id'])
+                import pdfplumber
+                with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+                    text = '\n'.join(page.extract_text() or '' for page in pdf.pages)
+                # Try to extract amount from PDF
+                for pattern in [r'(?:total|gesamt|summe|brutto|amount)[:\s]*[€$]?\s*([\d.,]+)',
+                                r'([\d.,]+)\s*(?:EUR|€)']:
+                    m = re.search(pattern, text, re.IGNORECASE)
+                    if m:
+                        amt_str = m.group(1).replace('.', '').replace(',', '.')
+                        try:
+                            c['netto'] = float(amt_str)
+                        except ValueError:
+                            pass
+                        break
+            except Exception:
+                pass
+
+    all_changes = changes + expense_changes
+
+    if not all_changes:
         st.markdown("**No changes detected.**")
-        st.markdown("All invoice filenames in `INVOICES 2026/` match the current Excel data.")
+        st.markdown("All invoices and cost files match the current spreadsheet data.")
         if st.button("Close", use_container_width=True, key='sync_close'):
             st.rerun()
         return
@@ -2900,9 +3087,12 @@ def sync_invoices_dialog():
              f'-webkit-backdrop-filter:blur({_GLASS_BLUR});border:1px solid {_GLASS_BORDER};'
              f'border-radius:12px;padding:1rem;margin-bottom:0.5rem')
 
-    st.markdown(f"**Found {len(changes)} change(s)**")
+    st.markdown(f"**Found {len(all_changes)} change(s)**")
     st.markdown("Review the changes below, then click **Apply Changes** to update the spreadsheet.")
 
+    # ── Invoice changes ──
+    if changes:
+        st.markdown(f"##### Invoices ({len(changes)})")
     for c in changes:
         inv = c['invoice_number']
         amt = fmt_eur(c['netto']) if c['netto'] else 'unknown amount'
@@ -2936,6 +3126,29 @@ def sync_invoices_dialog():
                         f'<div style="color:{C_TEXT};font-size:0.85rem">{desc}</div>'
                         f'</div>', unsafe_allow_html=True)
 
+    # ── Expense changes ──
+    if expense_changes:
+        st.markdown(f"##### Expenses ({len(expense_changes)})")
+    for c in expense_changes:
+        cat = c.get('category', '')
+        recip = c.get('recipient', '') or 'Unknown'
+        amt = fmt_eur(c['netto']) if c.get('netto') else ''
+
+        if c['change_type'] == 'NEW_EXPENSE':
+            amt_str = f" ({amt})" if amt else ""
+            desc = f"New expense: {cat} \u2014 {recip}{amt_str} will be added"
+            st.markdown(f'<div style="{_card};border-left:3px solid {C_BLUE}">'
+                        f'<div style="color:{C_TEXT};font-size:0.85rem">{desc}</div>'
+                        f'<div style="font-size:0.75rem;color:{C_MUTED};margin-top:0.25rem">{c.get("folder", "")}/{c["filename"]}</div>'
+                        f'</div>', unsafe_allow_html=True)
+
+        elif c['change_type'] == 'MISSING_EXPENSE':
+            amt_str = f" ({amt})" if amt else ""
+            desc = f"Expense {cat} \u2014 {recip}{amt_str} ({c['date_str']}) has no matching PDF"
+            st.markdown(f'<div style="{_card};border-left:3px solid {C_ORANGE}">'
+                        f'<div style="color:{C_TEXT};font-size:0.85rem">{desc}</div>'
+                        f'</div>', unsafe_allow_html=True)
+
     # --- Action buttons ---
     col1, col2 = st.columns(2)
     with col1:
@@ -2947,6 +3160,7 @@ def sync_invoices_dialog():
                 success = 0
                 errors = 0
 
+                # Apply invoice changes
                 for c in changes:
                     ok = False
                     if c['change_type'] == 'STATUS':
@@ -2967,10 +3181,37 @@ def sync_invoices_dialog():
                             'netto': c.get('netto', 0),
                             'brutto': c.get('brutto', 0),
                         }, status=c['new_status'])
-
                     if ok:
                         success += 1
-                    else:
+                    elif c['change_type'] != 'MISSING_EXPENSE':
+                        errors += 1
+
+                # Apply new expense changes
+                for c in expense_changes:
+                    if c['change_type'] != 'NEW_EXPENSE':
+                        continue  # MISSING_EXPENSE is informational only
+                    try:
+                        # Parse date from filename date_str (DD.MM) + year from folder
+                        year = 2026
+                        m_folder = re.match(r'^(\d{2})_(\w+)_(\d{4})$', c.get('month_folder', ''))
+                        if m_folder:
+                            year = int(m_folder.group(3))
+                        day, month_num = int(c['date_str'][:2]), int(c['date_str'][3:5])
+                        expense_date = datetime(year, month_num, day)
+                        month_name = MONTHS[month_num - 1]
+                        append_expense_to_excel({
+                            'date': expense_date,
+                            'month': month_name,
+                            'recipient': c.get('recipient', ''),
+                            'category': c.get('category', ''),
+                            'currency': 'EUR',
+                            'original_amount': c.get('netto', 0),
+                            'netto': c.get('netto', 0),
+                            'brutto': c.get('netto', 0),
+                            'notes': f"Auto-imported from {c['filename']}",
+                        })
+                        success += 1
+                    except Exception:
                         errors += 1
 
                 st.cache_data.clear()
@@ -3017,6 +3258,8 @@ def main():
         n_status = sum(1 for c in auto_changes if c['change_type'] == 'STATUS')
         n_new = sum(1 for c in auto_changes if c['change_type'] == 'NEW')
         n_missing = sum(1 for c in auto_changes if c['change_type'] == 'MISSING')
+        n_new_exp = sum(1 for c in auto_changes if c['change_type'] == 'NEW_EXPENSE')
+        n_miss_exp = sum(1 for c in auto_changes if c['change_type'] == 'MISSING_EXPENSE')
         parts = []
         if n_status:
             parts.append(f"{n_status} status change{'s' if n_status > 1 else ''}")
@@ -3024,12 +3267,16 @@ def main():
             parts.append(f"{n_new} new invoice{'s' if n_new > 1 else ''}")
         if n_missing:
             parts.append(f"{n_missing} missing invoice{'s' if n_missing > 1 else ''}")
+        if n_new_exp:
+            parts.append(f"{n_new_exp} new expense{'s' if n_new_exp > 1 else ''}")
+        if n_miss_exp:
+            parts.append(f"{n_miss_exp} missing expense{'s' if n_miss_exp > 1 else ''}")
         summary = ", ".join(parts)
         st.markdown(f"""
         <div style="background:rgba(232,101,26,0.12);border:1px solid rgba(232,101,26,0.3);
                     border-radius:8px;padding:0.6rem 1rem;margin-bottom:0.75rem;
                     font-size:0.85rem;color:{C_TEXT}">
-            <strong>{len(auto_changes)} invoice change{'s' if len(auto_changes) > 1 else ''} detected:</strong>
+            <strong>{len(auto_changes)} change{'s' if len(auto_changes) > 1 else ''} detected:</strong>
             {summary}. Click <strong>Update</strong> to review and apply.
         </div>
         """, unsafe_allow_html=True)

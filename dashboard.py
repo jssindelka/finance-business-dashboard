@@ -144,7 +144,18 @@ def _get_google_creds():
 
 @st.cache_resource(ttl=2400)
 def _get_gspread_client():
-    return gspread.authorize(_get_google_creds())
+    creds = _get_google_creds()
+    if 'google_credentials' in st.secrets:
+        # Cloud: build client with explicit auth header to avoid
+        # AuthorizedSession not attaching the token on Python 3.13
+        import requests as _req
+        from gspread import Client
+        from gspread.http_client import HTTPClient
+        session = _req.Session()
+        session.headers['Authorization'] = f'Bearer {creds.token}'
+        http_client = HTTPClient(auth=creds, session=session)
+        return Client(auth=creds, http_client=http_client)
+    return gspread.authorize(creds)
 
 
 @st.cache_resource(ttl=2400)

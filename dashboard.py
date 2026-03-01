@@ -2192,114 +2192,137 @@ def _parse_expense_filename(filename):
 
 def scan_expense_changes():
     """Compare cost folders on Google Drive against Expenses sheet.
-    Scans 2026/MM_MonthName_2026/03_Regular Cost/ and 04_Irregular Cost/
-    Detects:
-      - NEW: PDF in Drive but no matching entry in Expenses sheet
-      - MISSING: Sheet entry has no matching PDF in Drive
-    Returns list of dicts with change_type plus details.
+    Uses a monthly count-based approach: counts PDF files per month folder
+    on Drive and compares against the number of expense entries for that
+    month in the sheet.  Only flags a surplus (Drive has more files than
+    sheet entries) as potential new expenses.
+
+    When there IS a surplus, uses keyword matching to try to identify
+    which specific files are unregistered.
     """
     changes = []
     folder_2026 = _drive_find_folder.__wrapped__(DRIVE_ROOT_FOLDER, '2026')
     if not folder_2026:
         return changes
 
-    # Load expenses from sheet
+    # Count sheet entries per month
     ws_exp = _gsheet().worksheet('Expenses')
     exp_records = ws_exp.get_all_records()
     expenses_df = pd.DataFrame(exp_records)
-    if 'Date of Payment' in expenses_df.columns:
-        expenses_df['Date of Payment'] = pd.to_datetime(
-            expenses_df['Date of Payment'], dayfirst=True, errors='coerce')
+    sheet_month_counts = {}
+    if 'Month' in expenses_df.columns:
+        sheet_month_counts = expenses_df['Month'].value_counts().to_dict()
 
-    # Build a set of "fingerprints" for matching: (DD.MM, category_lower, recipient_lower)
-    sheet_fingerprints = {}
-    for idx, row in expenses_df.iterrows():
-        dt = row.get('Date of Payment')
-        if pd.isna(dt):
-            continue
-        date_key = f"{dt.day:02d}.{dt.month:02d}"
-        cat = str(row.get('Category', '')).strip().lower()
-        recip = str(row.get('Recipient', '')).strip().lower()
-        fp = (date_key, cat, recip)
-        sheet_fingerprints[fp] = {
-            'id': row.get('ID', ''),
-            'date': dt,
-            'category': str(row.get('Category', '')),
-            'recipient': str(row.get('Recipient', '')),
-            'netto': pd.to_numeric(_clean_currency(row.get('Netto (€)', 0)), errors='coerce') or 0,
-            'month': str(row.get('Month', '')),
-            'matched': False,
-        }
+    # Build keyword index from sheet for identifying specific new files
+    # For each entry: collect significant words from Category + Recipient
+    sheet_keywords = []  # list of sets of lowercase words
+    for _, row in expenses_df.iterrows():
+        cat = str(row.get('Category', ''))
+        recip = str(row.get('Recipient', ''))
+        combined = f"{cat} {recip}".lower()
+        words = set(w for w in re.split(r'[\s,.()\-/]+', combined) if len(w) >= 3)
+        sheet_keywords.append(words)
 
     # Scan all month folders in 2026/
     month_folders = _drive_list_files(folder_2026)
     for mf in month_folders:
         if mf['mimeType'] != 'application/vnd.google-apps.folder':
             continue
-        # e.g. "01_January_2026"
         if not re.match(r'^\d{2}_\w+_\d{4}$', mf['name']):
             continue
 
+        # Extract month name (e.g. "01_January_2026" → "January")
+        month_name = mf['name'].split('_')[1]
+
+        # Collect all cost PDFs for this month
+        drive_files = []
         for cost_subfolder in ['03_Regular Cost', '04_Irregular Cost']:
             sub_id = _drive_find_folder.__wrapped__(mf['id'], cost_subfolder)
             if not sub_id:
                 continue
             files = _drive_list_files(sub_id)
             for f in files:
-                if not f['name'].lower().endswith('.pdf'):
-                    continue
-                parsed = _parse_expense_filename(f['name'])
-                if not parsed:
-                    continue
-
-                # Try to match against sheet
-                fp = (parsed['date_str'], parsed['category'].lower(),
-                      parsed['recipient'].lower())
-                # Also try partial recipient match (sheet may have shorter name)
-                matched = False
-                for sheet_fp, info in sheet_fingerprints.items():
-                    if sheet_fp[0] != fp[0] or sheet_fp[1] != fp[1]:
-                        continue
-                    # Fuzzy recipient: check if one contains the other
-                    if (fp[2] and sheet_fp[2] and
-                            (fp[2] in sheet_fp[2] or sheet_fp[2] in fp[2])):
-                        info['matched'] = True
-                        matched = True
-                        break
-                    # Exact match (including both empty)
-                    if fp[2] == sheet_fp[2]:
-                        info['matched'] = True
-                        matched = True
-                        break
-
-                if not matched:
-                    changes.append({
-                        'change_type': 'NEW_EXPENSE',
-                        'filename': f['name'],
-                        'folder': f"{mf['name']}/{cost_subfolder}",
-                        'category': parsed['category'],
-                        'recipient': parsed['recipient'],
-                        'date_str': parsed['date_str'],
-                        'month_folder': mf['name'],
-                        'drive_file_id': f['id'],
+                if f['name'].lower().endswith('.pdf'):
+                    drive_files.append({
+                        'name': f['name'],
+                        'id': f['id'],
+                        'subfolder': cost_subfolder,
                     })
 
-    # MISSING: sheet entries with no matching PDF
-    for fp, info in sheet_fingerprints.items():
-        if not info['matched'] and info['category'] and info['recipient']:
+        drive_count = len(drive_files)
+        sheet_count = sheet_month_counts.get(month_name, 0)
+
+        if drive_count <= sheet_count:
+            # All files presumably registered — no new expenses
+            continue
+
+        # Drive has more files than sheet entries → identify the new ones
+        # Try keyword matching to find which files already have sheet entries
+        new_count = drive_count - sheet_count
+        matched_sheet = set()  # indices of sheet entries already matched
+
+        unmatched_files = []
+        for df in drive_files:
+            # Extract keywords from filename
+            stem = df['name'][:-4] if df['name'].lower().endswith('.pdf') else df['name']
+            file_words = set(w.lower() for w in re.split(r'[\s_.\-+]+', stem) if len(w) >= 3)
+
+            # Check if any sheet entry has overlapping keywords
+            best_match = -1
+            best_score = 0
+            for si, sk in enumerate(sheet_keywords):
+                if si in matched_sheet:
+                    continue
+                # Count overlapping keywords (file words found in sheet words
+                # OR sheet words found as substrings in file text)
+                file_text = stem.lower()
+                score = 0
+                for fw in file_words:
+                    for sw in sk:
+                        if fw in sw or sw in fw:
+                            score += 1
+                            break
+                for sw in sk:
+                    if sw in file_text:
+                        score += 1
+                if score > best_score:
+                    best_score = score
+                    best_match = si
+
+            if best_score >= 2 and best_match >= 0:
+                matched_sheet.add(best_match)
+            else:
+                unmatched_files.append(df)
+
+        # Report up to new_count unmatched files as new expenses
+        for df in unmatched_files[:new_count]:
+            parsed = _parse_expense_filename(df['name'])
             changes.append({
-                'change_type': 'MISSING_EXPENSE',
-                'filename': '',
-                'folder': '',
-                'category': info['category'],
-                'recipient': info['recipient'],
-                'date_str': fp[0],
-                'netto': info['netto'],
-                'month': info['month'],
+                'change_type': 'NEW_EXPENSE',
+                'filename': df['name'],
+                'folder': f"{mf['name']}/{df['subfolder']}",
+                'category': parsed['category'] if parsed else '',
+                'recipient': parsed['recipient'] if parsed else '',
+                'date_str': parsed['date_str'] if parsed else '',
+                'month_folder': mf['name'],
+                'drive_file_id': df['id'],
+            })
+
+        # If we couldn't identify specific files but count says there are new ones,
+        # report a generic "N new files in month" change
+        if not unmatched_files and new_count > 0:
+            changes.append({
+                'change_type': 'NEW_EXPENSE',
+                'filename': f'{new_count} new file(s)',
+                'folder': mf['name'],
+                'category': '',
+                'recipient': '',
+                'date_str': '',
+                'month_folder': mf['name'],
                 'drive_file_id': None,
             })
 
-    changes.sort(key=lambda c: (0 if c['change_type'] == 'NEW_EXPENSE' else 1, c.get('date_str', '')))
+    changes.sort(key=lambda c: c.get('date_str', ''))
     return changes
 
 
@@ -3142,13 +3165,6 @@ def sync_invoices_dialog():
                         f'<div style="font-size:0.75rem;color:{C_MUTED};margin-top:0.25rem">{c.get("folder", "")}/{c["filename"]}</div>'
                         f'</div>', unsafe_allow_html=True)
 
-        elif c['change_type'] == 'MISSING_EXPENSE':
-            amt_str = f" ({amt})" if amt else ""
-            desc = f"Expense {cat} \u2014 {recip}{amt_str} ({c['date_str']}) has no matching PDF"
-            st.markdown(f'<div style="{_card};border-left:3px solid {C_ORANGE}">'
-                        f'<div style="color:{C_TEXT};font-size:0.85rem">{desc}</div>'
-                        f'</div>', unsafe_allow_html=True)
-
     # --- Action buttons ---
     col1, col2 = st.columns(2)
     with col1:
@@ -3183,13 +3199,13 @@ def sync_invoices_dialog():
                         }, status=c['new_status'])
                     if ok:
                         success += 1
-                    elif c['change_type'] != 'MISSING_EXPENSE':
+                    else:
                         errors += 1
 
                 # Apply new expense changes
                 for c in expense_changes:
-                    if c['change_type'] != 'NEW_EXPENSE':
-                        continue  # MISSING_EXPENSE is informational only
+                    if c['change_type'] != 'NEW_EXPENSE' or not c.get('drive_file_id'):
+                        continue
                     try:
                         # Parse date from filename date_str (DD.MM) + year from folder
                         year = 2026
@@ -3259,7 +3275,6 @@ def main():
         n_new = sum(1 for c in auto_changes if c['change_type'] == 'NEW')
         n_missing = sum(1 for c in auto_changes if c['change_type'] == 'MISSING')
         n_new_exp = sum(1 for c in auto_changes if c['change_type'] == 'NEW_EXPENSE')
-        n_miss_exp = sum(1 for c in auto_changes if c['change_type'] == 'MISSING_EXPENSE')
         parts = []
         if n_status:
             parts.append(f"{n_status} status change{'s' if n_status > 1 else ''}")
@@ -3269,8 +3284,6 @@ def main():
             parts.append(f"{n_missing} missing invoice{'s' if n_missing > 1 else ''}")
         if n_new_exp:
             parts.append(f"{n_new_exp} new expense{'s' if n_new_exp > 1 else ''}")
-        if n_miss_exp:
-            parts.append(f"{n_miss_exp} missing expense{'s' if n_miss_exp > 1 else ''}")
         summary = ", ".join(parts)
         st.markdown(f"""
         <div style="background:rgba(232,101,26,0.12);border:1px solid rgba(232,101,26,0.3);

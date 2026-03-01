@@ -2190,38 +2190,57 @@ def _parse_expense_filename(filename):
     }
 
 
+def _keyword_score(file_stem, sheet_word_set):
+    """Score how well a Drive filename matches a sheet entry's keywords.
+    Exact word overlap is weighted heavily (×10) so that e.g. 'miles'
+    matching entry keyword 'miles' beats a substring match like
+    'carrental' containing 'rental' from a different entry.
+    """
+    file_text = file_stem.lower()
+    file_words = set(w for w in re.split(r'[\s_.\-+]+', file_text) if len(w) >= 3)
+    # Exact word overlap (both sets)
+    exact = len(file_words & sheet_word_set)
+    # Substring matches (sheet keywords found as substrings in the full text)
+    sub = sum(1 for sw in sheet_word_set if sw in file_text)
+    # Don't double-count exact matches already in substring count
+    return exact * 10 + max(0, sub - exact)
+
+
 def scan_expense_changes():
     """Compare cost folders on Google Drive against Expenses sheet.
     Uses a monthly count-based approach: counts PDF files per month folder
-    on Drive and compares against the number of expense entries for that
-    month in the sheet.  Only flags a surplus (Drive has more files than
-    sheet entries) as potential new expenses.
+    on Drive vs expense entries for that month in the sheet.
 
-    When there IS a surplus, uses keyword matching to try to identify
-    which specific files are unregistered.
+    Detects:
+      - SURPLUS (Drive > Sheet): new unregistered expenses
+      - DEFICIT (Drive < Sheet): expense PDF deleted, entry should be removed
+    Uses keyword matching to identify the specific entries involved.
     """
     changes = []
     folder_2026 = _drive_find_folder.__wrapped__(DRIVE_ROOT_FOLDER, '2026')
     if not folder_2026:
         return changes
 
-    # Count sheet entries per month
+    # Load sheet data
     ws_exp = _gsheet().worksheet('Expenses')
     exp_records = ws_exp.get_all_records()
     expenses_df = pd.DataFrame(exp_records)
-    sheet_month_counts = {}
-    if 'Month' in expenses_df.columns:
-        sheet_month_counts = expenses_df['Month'].value_counts().to_dict()
 
-    # Build keyword index from sheet for identifying specific new files
-    # For each entry: collect significant words from Category + Recipient
-    sheet_keywords = []  # list of sets of lowercase words
-    for _, row in expenses_df.iterrows():
+    # Group sheet entries by month with their keywords and row data
+    sheet_by_month = {}  # month_name → list of {row_idx, keywords, row_data}
+    for idx, row in expenses_df.iterrows():
+        month = str(row.get('Month', '')).strip()
+        if not month:
+            continue
         cat = str(row.get('Category', ''))
         recip = str(row.get('Recipient', ''))
         combined = f"{cat} {recip}".lower()
         words = set(w for w in re.split(r'[\s,.()\-/]+', combined) if len(w) >= 3)
-        sheet_keywords.append(words)
+        sheet_by_month.setdefault(month, []).append({
+            'idx': idx,
+            'keywords': words,
+            'row': row,
+        })
 
     # Scan all month folders in 2026/
     month_folders = _drive_list_files(folder_2026)
@@ -2231,7 +2250,6 @@ def scan_expense_changes():
         if not re.match(r'^\d{2}_\w+_\d{4}$', mf['name']):
             continue
 
-        # Extract month name (e.g. "01_January_2026" → "January")
         month_name = mf['name'].split('_')[1]
 
         # Collect all cost PDFs for this month
@@ -2250,79 +2268,114 @@ def scan_expense_changes():
                     })
 
         drive_count = len(drive_files)
-        sheet_count = sheet_month_counts.get(month_name, 0)
+        sheet_entries = sheet_by_month.get(month_name, [])
+        sheet_count = len(sheet_entries)
 
-        if drive_count <= sheet_count:
-            # All files presumably registered — no new expenses
-            continue
+        if drive_count == sheet_count:
+            continue  # balanced — no changes
 
-        # Drive has more files than sheet entries → identify the new ones
-        # Try keyword matching to find which files already have sheet entries
-        new_count = drive_count - sheet_count
-        matched_sheet = set()  # indices of sheet entries already matched
+        # ── SURPLUS: Drive has more files → new unregistered expenses ──
+        if drive_count > sheet_count:
+            new_count = drive_count - sheet_count
+            matched_sheet = set()
+            unmatched_files = []
 
-        unmatched_files = []
-        for df in drive_files:
-            # Extract keywords from filename
-            stem = df['name'][:-4] if df['name'].lower().endswith('.pdf') else df['name']
-            file_words = set(w.lower() for w in re.split(r'[\s_.\-+]+', stem) if len(w) >= 3)
+            for df in drive_files:
+                stem = df['name'][:-4] if df['name'].lower().endswith('.pdf') else df['name']
+                best_match = -1
+                best_score = 0
+                for i, se in enumerate(sheet_entries):
+                    if i in matched_sheet:
+                        continue
+                    score = _keyword_score(stem, se['keywords'])
+                    if score > best_score:
+                        best_score = score
+                        best_match = i
+                if best_score >= 2 and best_match >= 0:
+                    matched_sheet.add(best_match)
+                else:
+                    unmatched_files.append(df)
 
-            # Check if any sheet entry has overlapping keywords
-            best_match = -1
-            best_score = 0
-            for si, sk in enumerate(sheet_keywords):
-                if si in matched_sheet:
-                    continue
-                # Count overlapping keywords (file words found in sheet words
-                # OR sheet words found as substrings in file text)
-                file_text = stem.lower()
-                score = 0
-                for fw in file_words:
-                    for sw in sk:
-                        if fw in sw or sw in fw:
-                            score += 1
-                            break
-                for sw in sk:
-                    if sw in file_text:
-                        score += 1
-                if score > best_score:
-                    best_score = score
-                    best_match = si
+            for df in unmatched_files[:new_count]:
+                parsed = _parse_expense_filename(df['name'])
+                changes.append({
+                    'change_type': 'NEW_EXPENSE',
+                    'filename': df['name'],
+                    'folder': f"{mf['name']}/{df['subfolder']}",
+                    'category': parsed['category'] if parsed else '',
+                    'recipient': parsed['recipient'] if parsed else '',
+                    'date_str': parsed['date_str'] if parsed else '',
+                    'month_folder': mf['name'],
+                    'drive_file_id': df['id'],
+                })
 
-            if best_score >= 2 and best_match >= 0:
-                matched_sheet.add(best_match)
-            else:
-                unmatched_files.append(df)
+            if not unmatched_files and new_count > 0:
+                changes.append({
+                    'change_type': 'NEW_EXPENSE',
+                    'filename': f'{new_count} new file(s)',
+                    'folder': mf['name'],
+                    'category': '', 'recipient': '', 'date_str': '',
+                    'month_folder': mf['name'],
+                    'drive_file_id': None,
+                })
 
-        # Report up to new_count unmatched files as new expenses
-        for df in unmatched_files[:new_count]:
-            parsed = _parse_expense_filename(df['name'])
-            changes.append({
-                'change_type': 'NEW_EXPENSE',
-                'filename': df['name'],
-                'folder': f"{mf['name']}/{df['subfolder']}",
-                'category': parsed['category'] if parsed else '',
-                'recipient': parsed['recipient'] if parsed else '',
-                'date_str': parsed['date_str'] if parsed else '',
-                'month_folder': mf['name'],
-                'drive_file_id': df['id'],
-            })
+        # ── DEFICIT: Sheet has more entries → PDF was deleted ──
+        elif sheet_count > drive_count:
+            removed_count = sheet_count - drive_count
+            # Build full score matrix of all (file, entry) pairs, then
+            # greedily assign highest-scoring pairs first.  This ensures
+            # strong matches (e.g. "midjourney"↔Midjourney) take priority
+            # and weaker matches fall back to remaining entries.
+            all_pairs = []  # (score, file_idx, entry_idx)
+            for fi, df in enumerate(drive_files):
+                stem = df['name'][:-4] if df['name'].lower().endswith('.pdf') else df['name']
+                for ei, se in enumerate(sheet_entries):
+                    score = _keyword_score(stem, se['keywords'])
+                    if score >= 1:
+                        all_pairs.append((score, fi, ei))
 
-        # If we couldn't identify specific files but count says there are new ones,
-        # report a generic "N new files in month" change
-        if not unmatched_files and new_count > 0:
-            changes.append({
-                'change_type': 'NEW_EXPENSE',
-                'filename': f'{new_count} new file(s)',
-                'folder': mf['name'],
-                'category': '',
-                'recipient': '',
-                'date_str': '',
-                'month_folder': mf['name'],
-                'drive_file_id': None,
-            })
+            all_pairs.sort(key=lambda x: -x[0])
+            matched_files = set()
+            matched_entries = set()
+            for score, fi, ei in all_pairs:
+                if fi not in matched_files and ei not in matched_entries:
+                    matched_files.add(fi)
+                    matched_entries.add(ei)
 
-    changes.sort(key=lambda c: c.get('date_str', ''))
+            # Some files & entries can't keyword-match (e.g. Airpods↔Amazon)
+            # but both exist.  Force-pair remaining unmatched files with
+            # remaining unmatched entries so only truly orphaned entries
+            # (whose PDF was deleted) stay unmatched.
+            remaining_files = sorted(fi for fi in range(len(drive_files))
+                                     if fi not in matched_files)
+            remaining_entries = sorted(ei for ei in range(len(sheet_entries))
+                                       if ei not in matched_entries)
+            for p in range(min(len(remaining_files), len(remaining_entries))):
+                matched_entries.add(remaining_entries[p])
+
+            unmatched = [se for i, se in enumerate(sheet_entries)
+                         if i not in matched_entries]
+            for se in unmatched[:removed_count]:
+                row = se['row']
+                dt = row.get('Date of Payment', '')
+                cat = str(row.get('Category', ''))
+                recip = str(row.get('Recipient', ''))
+                netto = pd.to_numeric(
+                    _clean_currency(row.get('Netto (€)', 0)), errors='coerce') or 0
+                changes.append({
+                    'change_type': 'MISSING_EXPENSE',
+                    'category': cat,
+                    'recipient': recip,
+                    'date_str': str(dt),
+                    'netto': netto,
+                    'month': month_name,
+                    'sheet_id': row.get('Invoice-ID', ''),
+                })
+
+    changes.sort(key=lambda c: (
+        0 if c['change_type'] == 'NEW_EXPENSE' else 1,
+        c.get('date_str', ''),
+    ))
     return changes
 
 
@@ -2734,6 +2787,29 @@ def append_expense_to_excel(expense_data):
         expense_data['brutto'],
         expense_data.get('notes', ''),
     ], value_input_option='USER_ENTERED')
+
+
+def remove_expense_from_excel(expense_id):
+    """Remove an expense row from the Expenses sheet by Invoice-ID."""
+    ws = _gsheet().worksheet('Expenses')
+    col_a = ws.col_values(1)  # Invoice-ID column
+
+    target_row = None
+    search = str(expense_id).strip()
+    for i, val in enumerate(col_a[1:], start=2):
+        try:
+            cell_str = str(int(float(val))) if val else ''
+        except (ValueError, TypeError):
+            cell_str = str(val).strip()
+        if cell_str == search:
+            target_row = i
+            break
+
+    if target_row is None:
+        return False
+
+    ws.delete_rows(target_row)
+    return True
 
 
 @st.dialog("Upload Expense")
@@ -3165,6 +3241,14 @@ def sync_invoices_dialog():
                         f'<div style="font-size:0.75rem;color:{C_MUTED};margin-top:0.25rem">{c.get("folder", "")}/{c["filename"]}</div>'
                         f'</div>', unsafe_allow_html=True)
 
+        elif c['change_type'] == 'MISSING_EXPENSE':
+            amt_str = f" ({amt})" if amt else ""
+            desc = f"Expense: {cat} \u2014 {recip}{amt_str} \u2014 PDF removed from Drive, will be deleted"
+            st.markdown(f'<div style="{_card};border-left:3px solid {C_RED}">'
+                        f'<div style="color:{C_TEXT};font-size:0.85rem">{desc}</div>'
+                        f'<div style="font-size:0.75rem;color:{C_MUTED};margin-top:0.25rem">{c.get("month", "")} \u2014 ID {c.get("sheet_id", "")}</div>'
+                        f'</div>', unsafe_allow_html=True)
+
     # --- Action buttons ---
     col1, col2 = st.columns(2)
     with col1:
@@ -3202,7 +3286,24 @@ def sync_invoices_dialog():
                     else:
                         errors += 1
 
-                # Apply new expense changes
+                # Apply expense changes
+                # First: removals (MISSING_EXPENSE) — process in reverse ID order
+                # so that row deletions don't shift earlier rows
+                missing_exps = [c for c in expense_changes
+                                if c['change_type'] == 'MISSING_EXPENSE' and c.get('sheet_id')]
+                missing_exps.sort(key=lambda c: int(c['sheet_id']) if str(c['sheet_id']).isdigit() else 0,
+                                  reverse=True)
+                for c in missing_exps:
+                    try:
+                        ok = remove_expense_from_excel(c['sheet_id'])
+                        if ok:
+                            success += 1
+                        else:
+                            errors += 1
+                    except Exception:
+                        errors += 1
+
+                # Then: additions (NEW_EXPENSE)
                 for c in expense_changes:
                     if c['change_type'] != 'NEW_EXPENSE' or not c.get('drive_file_id'):
                         continue
@@ -3275,6 +3376,7 @@ def main():
         n_new = sum(1 for c in auto_changes if c['change_type'] == 'NEW')
         n_missing = sum(1 for c in auto_changes if c['change_type'] == 'MISSING')
         n_new_exp = sum(1 for c in auto_changes if c['change_type'] == 'NEW_EXPENSE')
+        n_miss_exp = sum(1 for c in auto_changes if c['change_type'] == 'MISSING_EXPENSE')
         parts = []
         if n_status:
             parts.append(f"{n_status} status change{'s' if n_status > 1 else ''}")
@@ -3284,6 +3386,8 @@ def main():
             parts.append(f"{n_missing} missing invoice{'s' if n_missing > 1 else ''}")
         if n_new_exp:
             parts.append(f"{n_new_exp} new expense{'s' if n_new_exp > 1 else ''}")
+        if n_miss_exp:
+            parts.append(f"{n_miss_exp} removed expense{'s' if n_miss_exp > 1 else ''}")
         summary = ", ".join(parts)
         st.markdown(f"""
         <div style="background:rgba(232,101,26,0.12);border:1px solid rgba(232,101,26,0.3);

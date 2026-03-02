@@ -313,9 +313,9 @@ def _get_drive_service():
     return build('drive', 'v3', credentials=_get_google_creds())
 
 
-@st.cache_resource(ttl=300)
+@st.cache_resource(ttl=2400)
 def _gsheet():
-    """Return the gspread Spreadsheet object (cached 5 min)."""
+    """Return the gspread Spreadsheet object (cached 40 min, same as client)."""
     return _get_gspread_client().open_by_key(SHEET_ID)
 
 
@@ -414,10 +414,11 @@ st.set_page_config(
 )
 
 # ─── Custom CSS (theme-aware) ────────────────────────────────────────────────
-def _inject_css():
-    """Inject theme-aware CSS. Called once per render cycle."""
-    t = _t()
-    is_dark = st.session_state.get('theme', 'light') == 'dark'
+@st.cache_data(ttl=3600)
+def _build_css(theme_name):
+    """Build the CSS string for a given theme. Cached — only rebuilds on theme change."""
+    t = THEMES[theme_name]
+    is_dark = theme_name == 'dark'
     positive_color = '#4ADE80' if is_dark else '#065F46'
     negative_color = '#F87171' if is_dark else '#C0392B'
     badge_paid_color = '#4ADE80' if is_dark else '#065F46'
@@ -426,7 +427,7 @@ def _inject_css():
     badge_sent_bg = '#262626' if is_dark else '#FEF3C7'
     badge_draft_color = '#737373' if is_dark else '#525252'
     badge_draft_bg = '#262626' if is_dark else '#E5E5E5'
-    st.markdown(f"""
+    return f"""
 <style>
 
     /* ── Base ── */
@@ -1098,7 +1099,14 @@ def _inject_css():
         }}
     }}
 </style>
-""", unsafe_allow_html=True)
+"""
+
+
+def _inject_css():
+    """Inject cached theme CSS. Only rebuilds the string when theme changes."""
+    theme_name = st.session_state.get('theme', 'light')
+    css_html = _build_css(theme_name)
+    st.markdown(css_html, unsafe_allow_html=True)
 
 _inject_css()
 
@@ -1119,9 +1127,9 @@ def _invalidate_data_caches():
     except Exception:
         pass
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=300)
 def load_data():
-    """Load all data from Google Sheets with 30s cache."""
+    """Load all data from Google Sheets with 5-min cache."""
     try:
         sh = _gsheet()
     except Exception as e:
@@ -1635,22 +1643,22 @@ def tab_expenses(data):
                 delete_expense_dialog(r.to_dict())
             st.markdown('</div>', unsafe_allow_html=True)
 
-    # Pagination controls
+    # Pagination controls (using on_click callbacks to avoid double-rerun)
     if total_pages > 1:
         pc1, pc2, pc3 = st.columns([1, 2, 1])
         with pc1:
-            if page > 0 and st.button("← Prev", key='exp_prev'):
-                st.session_state['exp_page'] = page - 1
-                st.rerun()
+            if page > 0:
+                st.button("← Prev", key='exp_prev',
+                          on_click=lambda: st.session_state.update({'exp_page': page - 1}))
         with pc2:
             st.markdown(
                 f'<div style="text-align:center;color:{_t()["text_secondary"]};font-size:0.8rem;padding-top:0.4rem">'
                 f'Page {page + 1} of {total_pages} · {total_count} expenses</div>',
                 unsafe_allow_html=True)
         with pc3:
-            if page < total_pages - 1 and st.button("Next →", key='exp_next'):
-                st.session_state['exp_page'] = page + 1
-                st.rerun()
+            if page < total_pages - 1:
+                st.button("Next →", key='exp_next',
+                          on_click=lambda: st.session_state.update({'exp_page': page + 1}))
 
 
 # ─── TAB 3 — Income ─────────────────────────────────────────────────────────
@@ -2787,9 +2795,9 @@ def _extract_invoice_id_from_filename(filename):
     return raw_id, normalized
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=300)
 def _auto_scan_changes():
-    """Cached auto-scan for Drive invoice + expense changes on page load."""
+    """Cached auto-scan for Drive invoice + expense changes on page load (5-min cache)."""
     changes = []
     _scan_errors = []
     try:
@@ -4486,9 +4494,9 @@ def _load_clients_from_sheet():
         return list(SEED_CLIENTS)
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def _load_clients_cached():
-    """Cached client list loader."""
+    """Cached client list loader (5-min cache)."""
     return _load_clients_from_sheet()
 
 
@@ -4595,9 +4603,9 @@ def _get_or_create_documents_sheet():
     return ws
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=300)
 def _load_documents():
-    """Load all documents from the Documents sheet."""
+    """Load all documents from the Documents sheet (5-min cache)."""
     try:
         ws = _get_or_create_documents_sheet()
         rows = ws.get_all_records()
@@ -4669,7 +4677,7 @@ def _save_document_to_sheet(form_data, status='draft', doc_number=None):
 
 def _update_document_in_sheet(doc_number, updates):
     """Update an existing document in the Documents sheet.
-    updates: dict of column_name -> new_value."""
+    updates: dict of column_name -> new_value. Uses batch_update for speed."""
     try:
         ws = _get_or_create_documents_sheet()
         all_records = ws.get_all_records()
@@ -4678,15 +4686,17 @@ def _update_document_in_sheet(doc_number, updates):
         for idx, record in enumerate(all_records):
             if str(record.get('Number', '')) == str(doc_number):
                 row_num = idx + 2  # +1 for header, +1 for 1-based indexing
-                for col_name, new_val in updates.items():
-                    if col_name in headers:
-                        col_idx = headers.index(col_name) + 1
-                        ws.update_cell(row_num, col_idx, str(new_val))
+                # Add Updated_At timestamp
                 updates_with_time = dict(updates)
                 updates_with_time['Updated_At'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                if 'Updated_At' in headers:
-                    col_idx = headers.index('Updated_At') + 1
-                    ws.update_cell(row_num, col_idx, updates_with_time['Updated_At'])
+                # Build batch of cell updates
+                cells_to_update = []
+                for col_name, new_val in updates_with_time.items():
+                    if col_name in headers:
+                        col_idx = headers.index(col_name) + 1
+                        cells_to_update.append(gspread.Cell(row_num, col_idx, str(new_val)))
+                if cells_to_update:
+                    ws.update_cells(cells_to_update)
                 _invalidate_documents_cache()
                 return True
 
@@ -5518,35 +5528,33 @@ def tab_offers_invoices(data):
     if 'oi_status_filter' not in st.session_state:
         st.session_state['oi_status_filter'] = 'all'
 
-    # Type filter row
+    # Type filter row (on_click callbacks to avoid double-rerun)
     type_options = ['All', 'Offers', 'Invoices']
     tcols = st.columns(len(type_options) + 6)
     for i, opt in enumerate(type_options):
         key_val = opt.lower()
         is_active = st.session_state['oi_type_filter'] == key_val
-        if tcols[i].button(
+        tcols[i].button(
             opt,
             key=f'oi_type_{key_val}',
             type='primary' if is_active else 'secondary',
             use_container_width=True,
-        ):
-            st.session_state['oi_type_filter'] = key_val
-            st.rerun()
+            on_click=lambda v=key_val: st.session_state.update({'oi_type_filter': v}),
+        )
 
-    # Status filter row
+    # Status filter row (on_click callbacks to avoid double-rerun)
     status_options = ['All', 'Draft', 'Sent', 'Pending', 'Paid']
     scols = st.columns(len(status_options) + 5)
     for i, opt in enumerate(status_options):
         key_val = opt.lower()
         is_active = st.session_state['oi_status_filter'] == key_val
-        if scols[i].button(
+        scols[i].button(
             opt,
             key=f'oi_status_{key_val}',
             type='primary' if is_active else 'secondary',
             use_container_width=True,
-        ):
-            st.session_state['oi_status_filter'] = key_val
-            st.rerun()
+            on_click=lambda v=key_val: st.session_state.update({'oi_status_filter': v}),
+        )
 
     # ── Filter documents ──
     type_filter = st.session_state['oi_type_filter']
@@ -5979,10 +5987,13 @@ def tab_clients(data):
                                 'Notes': edit_notes.strip(),
                                 'Country': edit_country.strip(),
                             }
+                            cells_to_update = []
                             for col_name, val in updates.items():
                                 if col_name in headers:
                                     col_idx = headers.index(col_name) + 1
-                                    ws.update_cell(row_num, col_idx, val)
+                                    cells_to_update.append(gspread.Cell(row_num, col_idx, str(val)))
+                            if cells_to_update:
+                                ws.update_cells(cells_to_update)
                             _load_clients_cached.clear()
                             _log_activity('CLIENT_UPDATED', f'{target_id} — {edit_name}')
                             st.success(f'Client {target_id} updated.')
@@ -6095,9 +6106,8 @@ def main():
             btn_key = f"nav_{key_suffix or page_name}"
             with st.container():
                 st.markdown(f'<div class="{container_class}">', unsafe_allow_html=True)
-                if st.button(page_name, key=btn_key, use_container_width=True):
-                    st.session_state['active_page'] = page_name
-                    st.rerun()
+                st.button(page_name, key=btn_key, use_container_width=True,
+                          on_click=lambda p=page_name: st.session_state.update({'active_page': p}))
                 st.markdown('</div>', unsafe_allow_html=True)
 
         # OVERVIEW nav items
@@ -6130,9 +6140,10 @@ def main():
         st.markdown(f'<div style="border-top:1px solid {t["sidebar_border"]};margin:20px 0 0 0;padding-top:12px"></div>', unsafe_allow_html=True)
 
         theme_label = "Light Mode" if st.session_state.get('theme', 'light') == 'dark' else "Dark Mode"
-        if st.button(theme_label, key='sidebar_theme_toggle', use_container_width=True):
+        def _toggle_theme():
             st.session_state['theme'] = 'dark' if st.session_state.get('theme', 'light') == 'light' else 'light'
-            st.rerun()
+        st.button(theme_label, key='sidebar_theme_toggle', use_container_width=True,
+                  on_click=_toggle_theme)
 
         st.markdown(f'''
             <div style="padding:8px 24px;font-size:11px;color:{t['sidebar_text_dim']};font-family:{FONT}">

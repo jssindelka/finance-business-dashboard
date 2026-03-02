@@ -90,6 +90,7 @@ CATEGORY_FILE_MAP = {
 }
 YEAR_FOLDER = str(CURRENT_YEAR)
 INVOICES_FOLDER = f"INVOICES {CURRENT_YEAR}"
+OFFERS_FOLDER = f"OFFERS {CURRENT_YEAR}"
 # Jan/Feb 2026 used 03_Regular Cost + 04_Irregular Cost subfolders.
 # From March 2026 onward, all expenses go into a single "Costs" subfolder.
 _LEGACY_COST_SUBFOLDERS = ['03_Regular Cost', '04_Irregular Cost']
@@ -98,6 +99,36 @@ _NEW_COST_SUBFOLDER = 'Costs'
 # Tax rate for self-employed income estimate (adjust to your bracket)
 TAX_RATE_INCOME = 0.30   # ~30% combined income tax + solidarity surcharge
 VAT_RATE = 0.19          # 19% German Umsatzsteuer
+
+# ─── Invoice / Offer Generator — Business Info ──────────────────────────────
+BIZ_INFO = {
+    'name': 'Josef Sindelka',
+    'street': 'Planckstraße 13',
+    'city': '22765 Hamburg',
+    'phone': '+420 777 603 301',
+    'email': 'hello@josefsindelka.com',
+    'website': 'www.josefsindelka.com',
+    'ust_id': 'DE348386373',
+    'steuernummer': '42/231/04652',
+    'bank': 'N26',
+    'iban': 'DE97 1001 1001 2627 4924 55',
+    'bic': 'NTSBDEB1XXX',
+}
+
+INCOME_CATEGORIES = ['Photography', 'Animation', 'Video Production', 'AI Studio']
+
+SEED_CLIENTS = [
+    {'id': 'K10002', 'name': 'NSR Bartu Academy', 'address': 'Schulhausstrasse 35, 8706 Meilen, Swasiland', 'notes': 'Video post-production. Tax-exempt: §4 Nr. 1a UStG (export to third country). VAT 0%.', 'country': 'Switzerland/Swaziland'},
+    {'id': 'K10005', 'name': 'KundenbüroHH GmbH & Co.', 'address': 'Planckstr. 13, 22765 Hamburg', 'notes': 'Agency intermediary for Wempe projects.', 'country': 'Germany'},
+    {'id': 'K10008', 'name': 'Gerresheim serviert GmbH & Co. KG', 'address': 'Australiastraße 52B, 20457 Hamburg', 'notes': 'Event photography and animation/onboarding videos.', 'country': 'Germany'},
+    {'id': 'K10009', 'name': 'Forward Thinking Tech GmbH c/o Kanzlei ASG', 'address': 'Am Sandtorkai 76, 20457 Hamburg', 'notes': 'Portrait and group photography.', 'country': 'Germany'},
+    {'id': 'K10012', 'name': 'Nüssli (Schweiz) AG', 'address': 'Hauptstrasse 36, 8536 Hüttwilen, Schweiz', 'notes': 'Swiss event construction. Video reels.', 'country': 'Switzerland'},
+    {'id': 'K10013', 'name': 'ATELIER BRÜCKNER GmbH', 'address': 'Krefelder Straße 32, 70376 Stuttgart', 'notes': 'Exhibition design. Expo 2025 Osaka.', 'country': 'Germany'},
+    {'id': 'K10017', 'name': 'Tom Heinemann / Time of Motion', 'address': 'Planckstraße 13, 22765 Hamburg', 'notes': 'Intermediary for BAT, Wempe, EDEKA, Berlitz, Montblanc projects.', 'country': 'Germany'},
+    {'id': 'K10020', 'name': 'Pinck & Herbold Treuhand GmbH & Co. KG', 'address': 'Langenstücken 34, 22393 Hamburg', 'notes': 'Real estate flat photography.', 'country': 'Germany'},
+    {'id': 'K10021', 'name': 'notonly', 'address': 'Greflingerstrasse 7, 22299 Hamburg', 'notes': 'Event visuals — video loops for events.', 'country': 'Germany'},
+    {'id': 'K10022', 'name': 'Claybird Inc.', 'address': '2595 Canyon Blvd, Suite 340, Boulder, CO 80302 USA', 'notes': 'US client. AI Studio photo generation.', 'country': 'USA'},
+]
 
 
 # ─── Activity Log ────────────────────────────────────────────────────────────
@@ -1881,7 +1912,965 @@ def tab_taxes(data):
     """, unsafe_allow_html=True)
 
 
-# ─── TAB 6 — 2025 ───────────────────────────────────────────────────────────
+# ─── TAB 6 — INVOICES / OFFERS ──────────────────────────────────────────────
+
+# ---------- Client Database (Google Sheets) ----------
+
+def _get_clients_worksheet():
+    """Get or create the 'Clients' worksheet."""
+    ss = _gsheet()
+    try:
+        return ss.worksheet('Clients')
+    except gspread.exceptions.WorksheetNotFound:
+        ws = ss.add_worksheet(title='Clients', rows=100, cols=6)
+        ws.update('A1:F1', [['ID', 'Name', 'Address', 'Notes', 'Country', 'Added']])
+        return ws
+
+
+def _get_counters_worksheet():
+    """Get or create the 'Counters' worksheet for offer/invoice/client numbering."""
+    ss = _gsheet()
+    try:
+        return ss.worksheet('Counters')
+    except gspread.exceptions.WorksheetNotFound:
+        ws = ss.add_worksheet(title='Counters', rows=5, cols=2)
+        ws.update('A1:B4', [
+            ['Counter', 'Value'],
+            ['offer', '28'],
+            ['invoice', '53'],
+            ['client', '23'],
+        ])
+        return ws
+
+
+@st.cache_data(ttl=300)
+def _load_clients_db():
+    """Load client database from Google Sheets. Returns list of client dicts."""
+    try:
+        ws = _get_clients_worksheet()
+        rows = ws.get_all_records()
+        if rows:
+            return [{'id': r.get('ID', ''), 'name': r.get('Name', ''),
+                      'address': r.get('Address', ''), 'notes': r.get('Notes', ''),
+                      'country': r.get('Country', '')} for r in rows if r.get('Name')]
+    except Exception:
+        pass
+    return []
+
+
+def _save_client_to_sheet(client):
+    """Append a new client row to the Clients worksheet."""
+    try:
+        ws = _get_clients_worksheet()
+        ws.append_row([
+            client['id'], client['name'], client.get('address', ''),
+            client.get('notes', ''), client.get('country', ''),
+            datetime.now().strftime('%Y-%m-%d'),
+        ], value_input_option='USER_ENTERED')
+        _load_clients_db.clear()
+    except Exception as e:
+        st.error(f"Could not save client: {e}")
+
+
+def _seed_clients_if_empty():
+    """Seed the Clients worksheet with known clients if it's empty."""
+    clients = _load_clients_db()
+    if len(clients) > 0:
+        return clients
+    try:
+        ws = _get_clients_worksheet()
+        rows = []
+        for c in SEED_CLIENTS:
+            rows.append([c['id'], c['name'], c['address'], c['notes'],
+                         c.get('country', ''), '2026-01-01'])
+        ws.append_rows(rows, value_input_option='USER_ENTERED')
+        _load_clients_db.clear()
+        return SEED_CLIENTS
+    except Exception:
+        return SEED_CLIENTS
+
+
+def _get_counter(name):
+    """Read a named counter value from the Counters sheet."""
+    try:
+        ws = _get_counters_worksheet()
+        records = ws.get_all_records()
+        for r in records:
+            if r.get('Counter') == name:
+                return int(r.get('Value', 0))
+    except Exception:
+        pass
+    defaults = {'offer': 28, 'invoice': 53, 'client': 23}
+    return defaults.get(name, 0)
+
+
+def _increment_counter(name):
+    """Increment a named counter and return the new value."""
+    try:
+        ws = _get_counters_worksheet()
+        records = ws.get_all_records()
+        for i, r in enumerate(records):
+            if r.get('Counter') == name:
+                new_val = int(r.get('Value', 0)) + 1
+                ws.update_cell(i + 2, 2, new_val)
+                return new_val
+    except Exception:
+        pass
+    defaults = {'offer': 28, 'invoice': 53, 'client': 23}
+    return defaults.get(name, 0) + 1
+
+
+def _next_offer_number():
+    n = _increment_counter('offer')
+    return f"AG-{CURRENT_YEAR}{str(n).zfill(3)}"
+
+
+def _next_invoice_number():
+    n = _increment_counter('invoice')
+    return f"RE-{CURRENT_YEAR}{str(n).zfill(3)}"
+
+
+def _next_client_id():
+    n = _increment_counter('client')
+    return f"K{str(n).zfill(5)}"
+
+
+def _get_or_create_client(name, address='', notes='', country=''):
+    """Find existing client by name or create a new one."""
+    clients = _load_clients_db()
+    if not clients:
+        clients = _seed_clients_if_empty()
+    name_lower = name.strip().lower()
+    for c in clients:
+        if c['name'].lower() == name_lower:
+            return c
+        # partial match
+        if name_lower in c['name'].lower() or c['name'].lower() in name_lower:
+            return c
+    # Create new
+    new_client = {
+        'id': _next_client_id(),
+        'name': name.strip(),
+        'address': address.strip(),
+        'notes': notes.strip(),
+        'country': country.strip(),
+    }
+    _save_client_to_sheet(new_client)
+    return new_client
+
+
+# ---------- PDF Generator (fpdf2, Swiss-style) ----------
+
+def _fmt_eur_de(num):
+    """Format number as German-style: 1.234,56"""
+    s = f"{num:,.2f}"  # 1,234.56
+    # Swap . and ,
+    s = s.replace(',', 'X').replace('.', ',').replace('X', '.')
+    return s
+
+
+def _generate_document_pdf(doc_type, doc_data):
+    """Generate a Swiss-style A4 PDF invoice or offer.
+    doc_type: 'invoice' or 'offer'
+    doc_data: dict with keys: number, date, client_name, client_address, client_id,
+              title, description, location, event_date, service_date,
+              items (list of dicts: pos, description, detail, qty, unit, unit_price, total),
+              subtotal, vat, total, invoice_type, deposit_label, project_total, validity
+    Returns: bytes (PDF content)
+    """
+    from fpdf import FPDF
+
+    BRAND_R, BRAND_G, BRAND_B = 11, 71, 20  # #0B4714
+
+    class InvoicePDF(FPDF):
+        pass
+
+    pdf = InvoicePDF(orientation='P', unit='mm', format='A4')
+    pdf.set_auto_page_break(auto=False)
+    pdf.add_page()
+    W, H = 210, 297
+    ML, MR, MT = 25, 20, 15
+    RIGHT = W - MR
+    content_w = W - ML - MR
+
+    # ── Green accent line at top ──
+    pdf.set_draw_color(BRAND_R, BRAND_G, BRAND_B)
+    pdf.set_line_width(0.8)
+    pdf.line(ML, MT, RIGHT, MT)
+
+    # ── Header: Name top-right in brand green ──
+    pdf.set_text_color(BRAND_R, BRAND_G, BRAND_B)
+    pdf.set_font('Helvetica', 'B', 22)
+    pdf.set_xy(ML, MT + 5)
+    pdf.cell(content_w, 8, BIZ_INFO['name'], align='R')
+
+    pdf.set_text_color(60, 60, 60)
+    pdf.set_font('Helvetica', '', 8.5)
+    hy = MT + 18
+    pdf.set_xy(ML, hy)
+    pdf.cell(content_w, 3.5, BIZ_INFO['email'], align='R')
+    hy += 3.5
+    pdf.set_xy(ML, hy)
+    pdf.cell(content_w, 3.5, BIZ_INFO['website'], align='R')
+
+    # ── Sender line (small gray) ──
+    cy = MT + 42
+    pdf.set_font('Helvetica', '', 7)
+    pdf.set_text_color(150, 150, 150)
+    sender_line = f"{BIZ_INFO['name']}  ·  {BIZ_INFO['street']}  ·  {BIZ_INFO['city']}"
+    pdf.set_xy(ML, cy)
+    pdf.cell(content_w, 3, sender_line)
+
+    # ── Client address ──
+    cy += 5
+    pdf.set_text_color(29, 29, 29)
+    pdf.set_font('Helvetica', 'B', 10)
+    pdf.set_xy(ML, cy)
+    pdf.cell(100, 5, doc_data.get('client_name', ''))
+    cy += 5
+    pdf.set_font('Helvetica', '', 9.5)
+    client_addr = doc_data.get('client_address', '')
+    if client_addr:
+        for line in client_addr.split('\n'):
+            pdf.set_xy(ML, cy)
+            pdf.cell(100, 4.5, line.strip())
+            cy += 4.5
+
+    # ── Document metadata right column ──
+    meta_label_x = RIGHT - 52
+    my = MT + 48
+    pdf.set_font('Helvetica', '', 8.5)
+
+    is_offer = doc_type == 'offer'
+    if is_offer:
+        meta = [
+            ('Estimate No.', doc_data.get('number', '')),
+            ('Client No.', doc_data.get('client_id', '')),
+            ('Date', doc_data.get('date_formatted', '')),
+            ('Valid until', doc_data.get('valid_until', '')),
+        ]
+    else:
+        meta = [
+            ('Invoice No.', doc_data.get('number', '')),
+            ('Client No.', doc_data.get('client_id', '')),
+            ('Date', doc_data.get('date_formatted', '')),
+        ]
+        if doc_data.get('service_date'):
+            meta.append(('Service Date', doc_data['service_date']))
+
+    for label, val in meta:
+        pdf.set_font('Helvetica', '', 8.5)
+        pdf.set_text_color(100, 100, 100)
+        pdf.set_xy(meta_label_x, my)
+        pdf.cell(52, 5, label)
+        pdf.set_font('Helvetica', 'B', 8.5)
+        pdf.set_text_color(29, 29, 29)
+        pdf.set_xy(meta_label_x, my)
+        pdf.cell(52, 5, str(val or ''), align='R')
+        my += 5.5
+
+    # ── Document heading ──
+    ty = max(cy + 10, my + 8)
+    pdf.set_text_color(BRAND_R, BRAND_G, BRAND_B)
+    pdf.set_font('Helvetica', 'B', 16)
+    if is_offer:
+        heading = 'ESTIMATE'
+    elif doc_data.get('invoice_type') == 'deposit' and doc_data.get('deposit_label'):
+        heading = doc_data['deposit_label'].upper()
+    else:
+        heading = 'INVOICE'
+    pdf.set_xy(ML, ty)
+    pdf.cell(content_w, 8, heading)
+
+    # ── Project title ──
+    ty += 8
+    pdf.set_text_color(29, 29, 29)
+    title = doc_data.get('title', '')
+    if title:
+        pdf.set_font('Helvetica', 'B', 11)
+        pdf.set_xy(ML, ty)
+        pdf.cell(content_w, 6, title)
+        ty += 6
+
+    # ── Location / date line ──
+    loc = doc_data.get('location', '')
+    evt_date = doc_data.get('event_date', '')
+    if loc or evt_date:
+        pdf.set_font('Helvetica', '', 8.5)
+        pdf.set_text_color(100, 100, 100)
+        parts = [loc, f'Date: {evt_date}' if evt_date else '']
+        parts = [p for p in parts if p]
+        pdf.set_xy(ML, ty)
+        pdf.cell(content_w, 5, '  ·  '.join(parts))
+        ty += 6
+
+    # ── Description ──
+    description = doc_data.get('description', '')
+    if description:
+        ty += 1
+        pdf.set_font('Helvetica', '', 9)
+        pdf.set_text_color(50, 50, 50)
+        desc_lines = pdf.multi_cell(content_w, 4.2, description, dry_run=True, output="LINES")
+        for dl in desc_lines:
+            pdf.set_xy(ML, ty)
+            pdf.cell(content_w, 4.2, dl)
+            ty += 4.2
+        ty += 4
+
+    # ── Line items table ──
+    ty += 2
+    col_pos = ML
+    col_desc = ML + 12
+    col_qty = ML + 82
+    col_unit = ML + 100
+    col_price = ML + 122
+    col_total = RIGHT
+
+    # Table header background
+    pdf.set_fill_color(242, 242, 242)
+    pdf.rect(ML, ty - 4.5, content_w, 7, 'F')
+    pdf.set_text_color(BRAND_R, BRAND_G, BRAND_B)
+    pdf.set_font('Helvetica', 'B', 7.5)
+    pdf.set_xy(col_pos + 1, ty - 1)
+    pdf.cell(10, 3, 'Pos.')
+    pdf.set_xy(col_desc, ty - 1)
+    pdf.cell(40, 3, 'Description')
+    pdf.set_xy(col_qty, ty - 1)
+    pdf.cell(15, 3, 'Qty')
+    pdf.set_xy(col_unit, ty - 1)
+    pdf.cell(15, 3, 'Unit')
+    pdf.set_xy(col_price, ty - 1)
+    pdf.cell(20, 3, 'Unit Price')
+    th_right = RIGHT - 1
+    # Total € header right-aligned
+    pdf.set_xy(col_price + 20, ty - 1)
+    tw = th_right - (col_price + 20)
+    pdf.cell(tw, 3, 'Total \u20ac', align='R')
+    ty += 5
+
+    # Separator
+    pdf.set_draw_color(210, 210, 210)
+    pdf.set_line_width(0.3)
+    pdf.line(ML, ty - 1.5, RIGHT, ty - 1.5)
+    ty += 2
+
+    # Table rows
+    pdf.set_text_color(29, 29, 29)
+    for item in doc_data.get('items', []):
+        if ty > 240:
+            _draw_footer(pdf, W, H, ML, MR, BRAND_R, BRAND_G, BRAND_B)
+            pdf.add_page()
+            ty = MT + 10
+
+        pos = str(item.get('pos', ''))
+        desc = item.get('description', '')
+        detail = item.get('detail', '')
+        qty = item.get('qty', 0)
+        unit = item.get('unit', '')
+        unit_price = item.get('unit_price', 0)
+        total = item.get('total', qty * unit_price)
+
+        pdf.set_font('Helvetica', '', 9)
+        pdf.set_xy(col_pos + 1, ty)
+        pdf.cell(10, 5, pos)
+
+        # Description bold
+        pdf.set_font('Helvetica', 'B', 9)
+        pdf.set_xy(col_desc, ty)
+        pdf.cell(60, 5, desc)
+
+        pdf.set_font('Helvetica', '', 9)
+        pdf.set_xy(col_qty, ty)
+        pdf.cell(15, 5, _fmt_eur_de(qty))
+        pdf.set_xy(col_unit, ty)
+        pdf.cell(15, 5, unit)
+        pdf.set_xy(col_price, ty)
+        pdf.cell(20, 5, _fmt_eur_de(unit_price))
+        # Total right-aligned
+        pdf.set_xy(col_price + 20, ty)
+        tw2 = th_right - (col_price + 20)
+        pdf.cell(tw2, 5, _fmt_eur_de(total), align='R')
+        ty += 5
+
+        # Detail line
+        if detail:
+            pdf.set_font('Helvetica', '', 8)
+            pdf.set_text_color(120, 120, 120)
+            detail_w = RIGHT - col_desc
+            detail_lines = pdf.multi_cell(detail_w, 3.5, detail, dry_run=True, output="LINES")
+            for dl in detail_lines:
+                pdf.set_xy(col_desc, ty)
+                pdf.cell(detail_w, 3.5, dl)
+                ty += 3.5
+            pdf.set_text_color(29, 29, 29)
+        ty += 3
+
+    # ── Totals section ──
+    ty += 3
+    totals_label_x = RIGHT - 60
+
+    pdf.set_font('Helvetica', '', 9)
+    pdf.set_text_color(60, 60, 60)
+    pdf.set_xy(totals_label_x, ty)
+    pdf.cell(30, 5, 'Subtotal (Netto)')
+    pdf.set_xy(totals_label_x + 30, ty)
+    pdf.cell(30, 5, _fmt_eur_de(doc_data.get('subtotal', 0)) + ' \u20ac', align='R')
+    ty += 5
+
+    pdf.set_xy(totals_label_x, ty)
+    pdf.cell(30, 5, 'USt. 19%')
+    pdf.set_xy(totals_label_x + 30, ty)
+    pdf.cell(30, 5, _fmt_eur_de(doc_data.get('vat', 0)) + ' \u20ac', align='R')
+    ty += 3
+
+    # Green separator before total
+    pdf.set_draw_color(BRAND_R, BRAND_G, BRAND_B)
+    pdf.set_line_width(0.6)
+    pdf.line(totals_label_x, ty, RIGHT, ty)
+    ty += 6
+
+    pdf.set_text_color(BRAND_R, BRAND_G, BRAND_B)
+    pdf.set_font('Helvetica', 'B', 12)
+    pdf.set_xy(totals_label_x, ty)
+    pdf.cell(30, 6, 'Total (Brutto)')
+    pdf.set_xy(totals_label_x + 30, ty)
+    pdf.cell(30, 6, _fmt_eur_de(doc_data.get('total', 0)) + ' \u20ac', align='R')
+
+    # Deposit reference
+    if not is_offer and doc_data.get('invoice_type') == 'deposit' and doc_data.get('project_total', 0) > 0:
+        ty += 7
+        pdf.set_font('Helvetica', '', 9)
+        pdf.set_text_color(60, 60, 60)
+        pdf.set_xy(totals_label_x, ty)
+        pdf.cell(60, 5, f"Total project value: {_fmt_eur_de(doc_data['project_total'])} \u20ac")
+
+    # ── Payment terms ──
+    if not is_offer:
+        ty += 12
+        if ty > 255:
+            _draw_footer(pdf, W, H, ML, MR, BRAND_R, BRAND_G, BRAND_B)
+            pdf.add_page()
+            ty = MT + 10
+        pdf.set_font('Helvetica', '', 8.5)
+        pdf.set_text_color(60, 60, 60)
+        pdf.set_xy(ML, ty)
+        pdf.cell(content_w, 4, 'Zahlbar sofort, rein netto.')
+
+    # ── Footer ──
+    _draw_footer(pdf, W, H, ML, MR, BRAND_R, BRAND_G, BRAND_B)
+
+    return pdf.output()
+
+
+def _draw_footer(pdf, W, H, ML, MR, BR, BG, BB):
+    """Draw the 3-column footer with green headers on the current page."""
+    RIGHT = W - MR
+    footer_top = H - 28
+
+    # Green line
+    pdf.set_draw_color(BR, BG, BB)
+    pdf.set_line_width(0.5)
+    pdf.line(ML, footer_top, RIGHT, footer_top)
+
+    col1_x = ML
+    col2_x = ML + 55
+    col3_x = ML + 115
+    fy = footer_top + 5
+
+    # Column headers
+    pdf.set_font('Helvetica', 'B', 7)
+    pdf.set_text_color(BR, BG, BB)
+    pdf.set_xy(col1_x, fy)
+    pdf.cell(50, 3, 'Josef Sindelka')
+    pdf.set_xy(col2_x, fy)
+    pdf.cell(50, 3, 'Tax Information')
+    pdf.set_xy(col3_x, fy)
+    pdf.cell(50, 3, 'Bank Details')
+
+    # Column content
+    fy += 4
+    pdf.set_font('Helvetica', '', 6.5)
+    pdf.set_text_color(100, 100, 100)
+
+    # Col 1: Address
+    pdf.set_xy(col1_x, fy)
+    pdf.cell(50, 3, BIZ_INFO['street'])
+    pdf.set_xy(col1_x, fy + 3)
+    pdf.cell(50, 3, BIZ_INFO['city'])
+
+    # Col 2: Tax
+    pdf.set_xy(col2_x, fy)
+    pdf.cell(50, 3, f"USt-IdNr.: {BIZ_INFO['ust_id']}")
+    pdf.set_xy(col2_x, fy + 3)
+    pdf.cell(50, 3, f"Steuernr.: {BIZ_INFO['steuernummer']}")
+
+    # Col 3: Bank
+    pdf.set_xy(col3_x, fy)
+    pdf.cell(50, 3, f"Bank: {BIZ_INFO['bank']}")
+    pdf.set_xy(col3_x, fy + 3)
+    pdf.cell(50, 3, f"IBAN: {BIZ_INFO['iban']}")
+    pdf.set_xy(col3_x, fy + 6)
+    pdf.cell(50, 3, f"BIC: {BIZ_INFO['bic']}")
+
+
+def _get_offers_folder_id():
+    """Get or create the OFFERS 2026 folder in Google Drive."""
+    year_folder = _get_year_folder()
+    if not year_folder:
+        return None
+    return _drive_get_or_create_folder(year_folder, OFFERS_FOLDER)
+
+
+# ---------- Tab: Invoices / Offers ----------
+
+def tab_invoices_offers(data):
+    """Invoice & Offer Generator tab."""
+
+    # Ensure clients are seeded
+    clients = _seed_clients_if_empty()
+    if not clients:
+        clients = _load_clients_db()
+
+    # Sub-tabs inside this tab
+    sub1, sub2, sub3 = st.tabs(['📄 NEW INVOICE', '📋 NEW OFFER', '👤 CLIENTS'])
+
+    # ────────────────────────────────────────────────────────────
+    # SUB-TAB 1: NEW INVOICE
+    # ────────────────────────────────────────────────────────────
+    with sub1:
+        st.markdown("#### Create Invoice (Rechnung)")
+        st.caption("Generate a professional PDF invoice and save to Google Drive.")
+
+        # Client selection
+        client_names = ['— Select Client —'] + [c['name'] for c in clients]
+        sel_client_idx = st.selectbox("Client", range(len(client_names)),
+                                       format_func=lambda i: client_names[i],
+                                       key='inv_client_sel')
+
+        if sel_client_idx > 0:
+            sel_client = clients[sel_client_idx - 1]
+            inv_client_name = sel_client['name']
+            inv_client_addr = st.text_area("Client Address", value=sel_client.get('address', ''),
+                                            height=68, key='inv_client_addr')
+            inv_client_id = sel_client['id']
+        else:
+            inv_client_name = st.text_input("Client Name (new)", key='inv_client_name_new')
+            inv_client_addr = st.text_area("Client Address", height=68, key='inv_client_addr_new')
+            inv_client_id = ''
+
+        c1, c2 = st.columns(2)
+        with c1:
+            inv_date = st.date_input("Invoice Date", value=datetime.today(), key='inv_date')
+        with c2:
+            inv_service_date = st.text_input("Service Date", placeholder="e.g. February 2026",
+                                              key='inv_service_date')
+
+        c3, c4 = st.columns(2)
+        with c3:
+            inv_title = st.text_input("Project Title", key='inv_title')
+        with c4:
+            inv_category = st.selectbox("Category (internal)", INCOME_CATEGORIES, key='inv_cat')
+
+        inv_description = st.text_area("Description (optional)", height=80, key='inv_desc')
+
+        c5, c6 = st.columns(2)
+        with c5:
+            inv_location = st.text_input("Location (optional)", key='inv_loc')
+        with c6:
+            inv_event_date = st.text_input("Event Date (optional)", key='inv_event_date')
+
+        # Invoice type
+        inv_type = st.selectbox("Invoice Type", ['Standard', 'Deposit (Abschlagsrechnung)'],
+                                 key='inv_type')
+        is_deposit = inv_type.startswith('Deposit')
+        deposit_label = ''
+        project_total = 0.0
+        if is_deposit:
+            dc1, dc2 = st.columns(2)
+            with dc1:
+                deposit_label = st.text_input("Deposit Label", value="ABSCHLAGSRECHNUNG",
+                                               key='inv_dep_label')
+            with dc2:
+                project_total = st.number_input("Total Project Value (€)", min_value=0.0,
+                                                 step=100.0, format="%.2f", key='inv_proj_total')
+
+        # Line items
+        st.markdown("**Line Items**")
+        if 'inv_items' not in st.session_state:
+            st.session_state['inv_items'] = [{'description': '', 'detail': '', 'qty': 1.0,
+                                               'unit': 'pcs', 'unit_price': 0.0}]
+
+        items_to_remove = None
+        for idx, item in enumerate(st.session_state['inv_items']):
+            ic1, ic2, ic3, ic4, ic5 = st.columns([3, 1, 1, 1.5, 0.5])
+            with ic1:
+                item['description'] = st.text_input(f"Description", value=item['description'],
+                                                     key=f'inv_item_desc_{idx}')
+            with ic2:
+                item['qty'] = st.number_input(f"Qty", value=float(item['qty']), min_value=0.0,
+                                               step=0.5, format="%.1f", key=f'inv_item_qty_{idx}')
+            with ic3:
+                item['unit'] = st.text_input(f"Unit", value=item['unit'],
+                                              key=f'inv_item_unit_{idx}')
+            with ic4:
+                item['unit_price'] = st.number_input(f"Price (€)", value=float(item['unit_price']),
+                                                      min_value=0.0, step=10.0, format="%.2f",
+                                                      key=f'inv_item_price_{idx}')
+            with ic5:
+                if idx > 0:
+                    if st.button("✕", key=f'inv_item_rm_{idx}'):
+                        items_to_remove = idx
+
+            item['detail'] = st.text_input(f"Detail (optional)", value=item.get('detail', ''),
+                                            key=f'inv_item_detail_{idx}')
+
+        if items_to_remove is not None:
+            st.session_state['inv_items'].pop(items_to_remove)
+            st.rerun()
+
+        if st.button("+ Add Line Item", key='inv_add_line'):
+            st.session_state['inv_items'].append({'description': '', 'detail': '', 'qty': 1.0,
+                                                   'unit': 'pcs', 'unit_price': 0.0})
+            st.rerun()
+
+        # Calculate totals
+        line_items = []
+        for idx, item in enumerate(st.session_state['inv_items']):
+            total = item['qty'] * item['unit_price']
+            line_items.append({
+                'pos': idx + 1,
+                'description': item['description'],
+                'detail': item.get('detail', ''),
+                'qty': item['qty'],
+                'unit': item['unit'],
+                'unit_price': item['unit_price'],
+                'total': total,
+            })
+        subtotal = sum(it['total'] for it in line_items)
+        vat = round(subtotal * VAT_RATE, 2)
+        total = round(subtotal + vat, 2)
+
+        # Totals display
+        st.markdown("---")
+        tc1, tc2, tc3 = st.columns(3)
+        with tc1:
+            st.metric("Subtotal (Netto)", f"{_fmt_eur_de(subtotal)} €")
+        with tc2:
+            st.metric("USt. 19%", f"{_fmt_eur_de(vat)} €")
+        with tc3:
+            st.metric("Total (Brutto)", f"{_fmt_eur_de(total)} €")
+
+        st.markdown("---")
+
+        # Generate button
+        if st.button("🧾 Generate Invoice PDF", type="primary", use_container_width=True,
+                      key='inv_generate'):
+            client_name = inv_client_name.strip() if inv_client_name else ''
+            if not client_name:
+                st.error("Please select or enter a client name.")
+            elif subtotal <= 0:
+                st.error("Please add at least one line item with a price.")
+            else:
+                with st.spinner("Generating invoice..."):
+                    # Get or create client
+                    client = _get_or_create_client(client_name, inv_client_addr)
+
+                    # Generate invoice number
+                    inv_number = _next_invoice_number()
+
+                    # Format date
+                    date_formatted = inv_date.strftime('%d.%m.%Y')
+                    date_iso = inv_date.strftime('%Y-%m-%d')
+
+                    # Build doc data
+                    doc_data = {
+                        'number': inv_number,
+                        'date': date_iso,
+                        'date_formatted': date_formatted,
+                        'client_name': client['name'],
+                        'client_address': inv_client_addr,
+                        'client_id': client['id'],
+                        'title': inv_title,
+                        'description': inv_description,
+                        'location': inv_location,
+                        'event_date': inv_event_date,
+                        'service_date': inv_service_date,
+                        'items': line_items,
+                        'subtotal': subtotal,
+                        'vat': vat,
+                        'total': total,
+                        'invoice_type': 'deposit' if is_deposit else 'standard',
+                        'deposit_label': deposit_label if is_deposit else '',
+                        'project_total': project_total if is_deposit else 0,
+                    }
+
+                    # Generate PDF
+                    pdf_bytes = _generate_document_pdf('invoice', doc_data)
+                    filename = f"notpaid_Rechnung_JosefSindelka_{inv_number}.pdf"
+
+                    # Upload to Google Drive
+                    try:
+                        folder_id = _get_invoices_folder_id()
+                        if folder_id:
+                            _drive_upload_bytes(folder_id, filename, pdf_bytes)
+                            st.success(f"✅ Invoice **{inv_number}** uploaded to Drive: `{INVOICES_FOLDER}/{filename}`")
+                        else:
+                            st.warning("Could not find INVOICES folder — PDF generated but not uploaded.")
+                    except Exception as e:
+                        st.error(f"Drive upload failed: {e}")
+
+                    # Add to Income sheet (unpaid)
+                    try:
+                        # Extract numeric part for sheet (e.g., RE-2026054 → 2026054)
+                        sheet_inv_num = inv_number.replace('RE-', '')
+                        inv_data_for_sheet = {
+                            'id': '',
+                            'invoice_number': int(sheet_inv_num) if sheet_inv_num.isdigit() else sheet_inv_num,
+                            'date': datetime(inv_date.year, inv_date.month, inv_date.day),
+                            'month': MONTHS[inv_date.month - 1],
+                            'client': client['name'],
+                            'project': inv_title,
+                            'category': inv_category,
+                            'netto': subtotal,
+                            'brutto': total,
+                        }
+                        add_invoice_to_excel(inv_data_for_sheet, status='unpaid')
+                        _invalidate_data_caches()
+                        st.success(f"✅ Added to Income sheet as unpaid invoice.")
+                    except Exception as e:
+                        st.error(f"Could not add to Income sheet: {e}")
+
+                    _log_activity('INVOICE_CREATED', f"{inv_number} | {client['name']} | {_fmt_eur_de(total)} €")
+
+                    # Download button
+                    st.download_button("⬇ Download PDF", data=pdf_bytes, file_name=filename,
+                                        mime='application/pdf', key='inv_download')
+
+                    # Reset line items
+                    st.session_state['inv_items'] = [{'description': '', 'detail': '', 'qty': 1.0,
+                                                       'unit': 'pcs', 'unit_price': 0.0}]
+
+    # ────────────────────────────────────────────────────────────
+    # SUB-TAB 2: NEW OFFER
+    # ────────────────────────────────────────────────────────────
+    with sub2:
+        st.markdown("#### Create Offer (Angebot)")
+        st.caption("Generate a professional PDF offer and save to Google Drive.")
+
+        # Client selection
+        off_client_names = ['— Select Client —'] + [c['name'] for c in clients]
+        off_sel_idx = st.selectbox("Client", range(len(off_client_names)),
+                                    format_func=lambda i: off_client_names[i],
+                                    key='off_client_sel')
+
+        if off_sel_idx > 0:
+            off_sel_client = clients[off_sel_idx - 1]
+            off_client_name = off_sel_client['name']
+            off_client_addr = st.text_area("Client Address",
+                                            value=off_sel_client.get('address', ''),
+                                            height=68, key='off_client_addr')
+            off_client_id = off_sel_client['id']
+        else:
+            off_client_name = st.text_input("Client Name (new)", key='off_client_name_new')
+            off_client_addr = st.text_area("Client Address", height=68, key='off_client_addr_new')
+            off_client_id = ''
+
+        oc1, oc2 = st.columns(2)
+        with oc1:
+            off_date = st.date_input("Offer Date", value=datetime.today(), key='off_date')
+        with oc2:
+            off_validity = st.number_input("Validity (days)", value=30, min_value=1,
+                                            max_value=365, key='off_validity')
+
+        oc3, oc4 = st.columns(2)
+        with oc3:
+            off_title = st.text_input("Project Title", key='off_title')
+        with oc4:
+            off_category = st.selectbox("Category (internal)", INCOME_CATEGORIES,
+                                         key='off_cat')
+
+        off_description = st.text_area("Description (optional)", height=80, key='off_desc')
+
+        oc5, oc6 = st.columns(2)
+        with oc5:
+            off_location = st.text_input("Location (optional)", key='off_loc')
+        with oc6:
+            off_event_date = st.text_input("Event Date (optional)", key='off_event_date')
+
+        # Line items
+        st.markdown("**Line Items**")
+        if 'off_items' not in st.session_state:
+            st.session_state['off_items'] = [{'description': '', 'detail': '', 'qty': 1.0,
+                                               'unit': 'pcs', 'unit_price': 0.0}]
+
+        off_items_remove = None
+        for idx, item in enumerate(st.session_state['off_items']):
+            lic1, lic2, lic3, lic4, lic5 = st.columns([3, 1, 1, 1.5, 0.5])
+            with lic1:
+                item['description'] = st.text_input("Description", value=item['description'],
+                                                     key=f'off_item_desc_{idx}')
+            with lic2:
+                item['qty'] = st.number_input("Qty", value=float(item['qty']), min_value=0.0,
+                                               step=0.5, format="%.1f", key=f'off_item_qty_{idx}')
+            with lic3:
+                item['unit'] = st.text_input("Unit", value=item['unit'],
+                                              key=f'off_item_unit_{idx}')
+            with lic4:
+                item['unit_price'] = st.number_input("Price (€)", value=float(item['unit_price']),
+                                                      min_value=0.0, step=10.0, format="%.2f",
+                                                      key=f'off_item_price_{idx}')
+            with lic5:
+                if idx > 0:
+                    if st.button("✕", key=f'off_item_rm_{idx}'):
+                        off_items_remove = idx
+
+            item['detail'] = st.text_input("Detail (optional)", value=item.get('detail', ''),
+                                            key=f'off_item_detail_{idx}')
+
+        if off_items_remove is not None:
+            st.session_state['off_items'].pop(off_items_remove)
+            st.rerun()
+
+        if st.button("+ Add Line Item", key='off_add_line'):
+            st.session_state['off_items'].append({'description': '', 'detail': '', 'qty': 1.0,
+                                                   'unit': 'pcs', 'unit_price': 0.0})
+            st.rerun()
+
+        # Calculate totals
+        off_line_items = []
+        for idx, item in enumerate(st.session_state['off_items']):
+            total_i = item['qty'] * item['unit_price']
+            off_line_items.append({
+                'pos': idx + 1,
+                'description': item['description'],
+                'detail': item.get('detail', ''),
+                'qty': item['qty'],
+                'unit': item['unit'],
+                'unit_price': item['unit_price'],
+                'total': total_i,
+            })
+        off_subtotal = sum(it['total'] for it in off_line_items)
+        off_vat = round(off_subtotal * VAT_RATE, 2)
+        off_total = round(off_subtotal + off_vat, 2)
+
+        st.markdown("---")
+        otc1, otc2, otc3 = st.columns(3)
+        with otc1:
+            st.metric("Subtotal (Netto)", f"{_fmt_eur_de(off_subtotal)} €")
+        with otc2:
+            st.metric("USt. 19%", f"{_fmt_eur_de(off_vat)} €")
+        with otc3:
+            st.metric("Total (Brutto)", f"{_fmt_eur_de(off_total)} €")
+
+        st.markdown("---")
+
+        if st.button("📋 Generate Offer PDF", type="primary", use_container_width=True,
+                      key='off_generate'):
+            off_name = off_client_name.strip() if off_client_name else ''
+            if not off_name:
+                st.error("Please select or enter a client name.")
+            elif off_subtotal <= 0:
+                st.error("Please add at least one line item with a price.")
+            else:
+                with st.spinner("Generating offer..."):
+                    client = _get_or_create_client(off_name, off_client_addr)
+                    off_number = _next_offer_number()
+
+                    from datetime import timedelta
+                    valid_until_date = off_date + timedelta(days=off_validity)
+
+                    doc_data = {
+                        'number': off_number,
+                        'date': off_date.strftime('%Y-%m-%d'),
+                        'date_formatted': off_date.strftime('%d.%m.%Y'),
+                        'valid_until': valid_until_date.strftime('%d.%m.%Y'),
+                        'client_name': client['name'],
+                        'client_address': off_client_addr,
+                        'client_id': client['id'],
+                        'title': off_title,
+                        'description': off_description,
+                        'location': off_location,
+                        'event_date': off_event_date,
+                        'items': off_line_items,
+                        'subtotal': off_subtotal,
+                        'vat': off_vat,
+                        'total': off_total,
+                        'validity': off_validity,
+                    }
+
+                    pdf_bytes = _generate_document_pdf('offer', doc_data)
+                    filename = f"Angebot_JosefSindelka_{off_number}.pdf"
+
+                    # Upload to Google Drive
+                    try:
+                        folder_id = _get_offers_folder_id()
+                        if folder_id:
+                            _drive_upload_bytes(folder_id, filename, pdf_bytes)
+                            st.success(f"✅ Offer **{off_number}** uploaded to Drive: `{OFFERS_FOLDER}/{filename}`")
+                        else:
+                            st.warning("Could not find/create OFFERS folder — PDF generated but not uploaded.")
+                    except Exception as e:
+                        st.error(f"Drive upload failed: {e}")
+
+                    _log_activity('OFFER_CREATED', f"{off_number} | {client['name']} | {_fmt_eur_de(off_total)} €")
+
+                    st.download_button("⬇ Download PDF", data=pdf_bytes, file_name=filename,
+                                        mime='application/pdf', key='off_download')
+
+                    st.session_state['off_items'] = [{'description': '', 'detail': '', 'qty': 1.0,
+                                                       'unit': 'pcs', 'unit_price': 0.0}]
+
+    # ────────────────────────────────────────────────────────────
+    # SUB-TAB 3: CLIENTS
+    # ────────────────────────────────────────────────────────────
+    with sub3:
+        st.markdown("#### Client Database")
+        st.caption("Manage your client list. Clients are stored in Google Sheets.")
+
+        clients_fresh = _load_clients_db()
+        if not clients_fresh:
+            clients_fresh = _seed_clients_if_empty()
+
+        if clients_fresh:
+            client_df = pd.DataFrame(clients_fresh)
+            col_order = ['id', 'name', 'address', 'notes', 'country']
+            for c in col_order:
+                if c not in client_df.columns:
+                    client_df[c] = ''
+            client_df = client_df[col_order]
+            client_df.columns = ['ID', 'Name', 'Address', 'Notes', 'Country']
+            st.dataframe(client_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No clients yet. They will be auto-created when you generate your first invoice or offer.")
+
+        # Add client form
+        with st.expander("➕ Add New Client", expanded=False):
+            nc1, nc2 = st.columns(2)
+            with nc1:
+                new_name = st.text_input("Name", key='new_client_name')
+            with nc2:
+                new_country = st.text_input("Country", key='new_client_country')
+            new_addr = st.text_input("Address", key='new_client_addr')
+            new_notes = st.text_input("Notes", key='new_client_notes')
+
+            if st.button("Save Client", key='save_new_client'):
+                if not new_name.strip():
+                    st.error("Client name is required.")
+                else:
+                    new_client = {
+                        'id': _next_client_id(),
+                        'name': new_name.strip(),
+                        'address': new_addr.strip(),
+                        'notes': new_notes.strip(),
+                        'country': new_country.strip(),
+                    }
+                    _save_client_to_sheet(new_client)
+                    _log_activity('CLIENT_ADDED', f"{new_client['id']} | {new_client['name']}")
+                    st.success(f"✅ Client **{new_client['name']}** ({new_client['id']}) added.")
+                    st.rerun()
+
+
+# ─── TAB 7 — 2025 ───────────────────────────────────────────────────────────
 
 def tab_2025(data):
     m2025 = _parse_2025_monthly(data.get('hist_2025'))
@@ -3900,10 +4889,11 @@ def main():
         ).sum()
 
     # ── Tabs ──
-    t1, t2, t3, t4, t5, t6 = st.tabs([
+    t1, t2, t3, t4, t5, t6, t7 = st.tabs([
         'OVERVIEW',
         'EXPENSES',
         'INCOME',
+        'INVOICES / OFFERS',
         'GOAL TRACKER',
         'TAXES',
         '2025',
@@ -3926,10 +4916,12 @@ def main():
     with t3:
         tab_income(data)
     with t4:
-        tab_goal(data)
+        tab_invoices_offers(data)
     with t5:
-        tab_taxes(data)
+        tab_goal(data)
     with t6:
+        tab_taxes(data)
+    with t7:
         tab_2025(data)
 
     # ── Activity Log (#10) ──

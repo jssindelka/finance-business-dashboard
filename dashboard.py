@@ -579,35 +579,45 @@ def _inject_css():
     .badge-draft {{ color: {t['muted']}; background: {t['surface3']}; }}
 
     /* ── Filter Pills (horizontal radio in dashboard) ── */
-    [data-testid="stRadio"] > div {{
+    [data-testid="stRadio"] > div[role="radiogroup"] {{
         gap: 0.4rem;
         flex-wrap: wrap;
     }}
-    [data-testid="stRadio"] > div > label {{
-        background: {t['surface']};
-        border: 1px solid {t['border']};
-        border-radius: 20px;
-        padding: 0.35rem 1rem;
-        font-size: 0.78rem;
+    [data-testid="stRadio"] > div[role="radiogroup"] > label {{
+        background: {t['surface']} !important;
+        border: 1px solid {t['border']} !important;
+        border-radius: 20px !important;
+        padding: 0.35rem 1rem !important;
+        font-size: 0.78rem !important;
         font-weight: 500;
         font-family: {FONT};
-        color: {t['text_secondary']};
+        color: {t['text_secondary']} !important;
         transition: all 0.2s ease;
         cursor: pointer;
     }}
-    [data-testid="stRadio"] > div > label:hover {{
-        border-color: {t['border_hover']};
-        color: {t['text']};
+    [data-testid="stRadio"] > div[role="radiogroup"] > label > div:last-child {{
+        color: {t['text_secondary']} !important;
     }}
-    [data-testid="stRadio"] > div > label[data-checked="true"],
-    [data-testid="stRadio"] > div > label:has(input:checked) {{
-        background: {t['text']};
-        color: {t['surface']};
-        border-color: {t['text']};
+    [data-testid="stRadio"] > div[role="radiogroup"] > label:hover {{
+        border-color: {t['border_hover']} !important;
+        color: {t['text']} !important;
+    }}
+    [data-testid="stRadio"] > div[role="radiogroup"] > label:hover > div:last-child {{
+        color: {t['text']} !important;
+    }}
+    [data-testid="stRadio"] > div[role="radiogroup"] > label[data-checked="true"],
+    [data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) {{
+        background: {t['text']} !important;
+        color: {t['surface']} !important;
+        border-color: {t['text']} !important;
         font-weight: 600;
     }}
-    [data-testid="stRadio"] > div > label > div:first-child {{
-        display: none;  /* hide default radio circle */
+    [data-testid="stRadio"] > div[role="radiogroup"] > label[data-checked="true"] > div:last-child,
+    [data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) > div:last-child {{
+        color: {t['surface']} !important;
+    }}
+    [data-testid="stRadio"] > div[role="radiogroup"] > label > div:first-child {{
+        display: none !important;  /* hide default radio circle */
     }}
 
     /* ── Dashboard row action buttons ── */
@@ -3208,16 +3218,23 @@ def tab_invoices_offers(data):
             _t_text = t["text"]
             _t_text2 = t["text_secondary"]
             _t_border = t["border"]
+            _hdr_style = f"font-size:0.65rem;font-weight:600;letter-spacing:0.06em;color:{_t_muted};font-family:{FONT}"
             hdr_cols = st.columns([1.2, 0.8, 1.5, 1.5, 1.2, 1, 0.8, 2])
             hdr_labels = ['NUMBER', 'TYPE', 'CLIENT', 'PROJECT', 'AMOUNT', 'DATE', 'STATUS', 'ACTIONS']
             for hc, hl in zip(hdr_cols, hdr_labels):
-                hc.markdown(f"<span style='font-size:0.65rem;font-weight:600;letter-spacing:0.06em;color:{_t_muted};font-family:{FONT}'>{hl}</span>",
-                           unsafe_allow_html=True)
+                with hc:
+                    st.markdown(f'<span style="{_hdr_style}">{hl}</span>',
+                               unsafe_allow_html=True)
 
-            st.markdown(f"<hr style='margin:0.2rem 0 0.4rem 0;border:none;border-top:1px solid {_t_border}'>",
+            st.markdown(f'<hr style="margin:0.2rem 0 0.4rem 0;border:none;border-top:1px solid {_t_border}">',
                        unsafe_allow_html=True)
 
             # ── Document rows ──
+            _style_bold = f"font-weight:600;font-size:0.78rem;color:{_t_text}"
+            _style_text = f"font-size:0.78rem;color:{_t_text}"
+            _style_sec = f"font-size:0.78rem;color:{_t_text2}"
+            _style_amt = f"font-size:0.78rem;font-weight:500;color:{_t_text};font-variant-numeric:tabular-nums"
+
             for idx, doc in enumerate(filtered):
                 dn = doc['number']
                 s_color = _status_colors.get(doc['status'], t['muted'])
@@ -3228,17 +3245,24 @@ def tab_invoices_offers(data):
                 _sc_b = str(int(_sc_hex[4:6], 16))
                 _sc_rgba = f"{_sc_r},{_sc_g},{_sc_b}"
                 _doc_status = doc["status"]
-                status_badge = f'<span style="color:{s_color};background:rgba({_sc_rgba},0.15);padding:2px 10px;border-radius:10px;font-size:0.72rem;font-weight:600">{_doc_status}</span>'
+                _badge_style = f"color:{s_color};background:rgba({_sc_rgba},0.15);padding:2px 10px;border-radius:10px;font-size:0.72rem;font-weight:600"
 
                 rc = st.columns([1.2, 0.8, 1.5, 1.5, 1.2, 1, 0.8, 2])
-                rc[0].markdown(f"<span style='font-weight:600;font-size:0.78rem;color:{_t_text}'>{dn}</span>", unsafe_allow_html=True)
-                rc[1].markdown(f"<span style='font-size:0.78rem;color:{_t_text2}'>{doc['type']}</span>", unsafe_allow_html=True)
-                rc[2].markdown(f"<span style='font-size:0.78rem;color:{_t_text}'>{doc['client']}</span>", unsafe_allow_html=True)
-                rc[3].markdown(f"<span style='font-size:0.78rem;color:{_t_text2}'>{doc['project']}</span>", unsafe_allow_html=True)
+                with rc[0]:
+                    st.markdown(f'<span style="{_style_bold}">{dn}</span>', unsafe_allow_html=True)
+                with rc[1]:
+                    st.markdown(f'<span style="{_style_sec}">{doc["type"]}</span>', unsafe_allow_html=True)
+                with rc[2]:
+                    st.markdown(f'<span style="{_style_text}">{doc["client"]}</span>', unsafe_allow_html=True)
+                with rc[3]:
+                    st.markdown(f'<span style="{_style_sec}">{doc["project"]}</span>', unsafe_allow_html=True)
                 _amt_str = _fmt_eur_de(doc['amount'])
-                rc[4].markdown(f"<span style='font-size:0.78rem;font-weight:500;color:{_t_text};font-variant-numeric:tabular-nums'>{_amt_str} &euro;</span>", unsafe_allow_html=True)
-                rc[5].markdown(f"<span style='font-size:0.78rem;color:{_t_text2}'>{doc['date']}</span>", unsafe_allow_html=True)
-                rc[6].markdown(status_badge, unsafe_allow_html=True)
+                with rc[4]:
+                    st.markdown(f'<span style="{_style_amt}">{_amt_str} €</span>', unsafe_allow_html=True)
+                with rc[5]:
+                    st.markdown(f'<span style="{_style_sec}">{doc["date"]}</span>', unsafe_allow_html=True)
+                with rc[6]:
+                    st.markdown(f'<span style="{_badge_style}">{_doc_status}</span>', unsafe_allow_html=True)
 
                 # Action buttons in last column
                 with rc[7]:

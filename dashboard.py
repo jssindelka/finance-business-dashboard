@@ -4072,6 +4072,9 @@ def _check_documents_drive_integrity():
                             'message': f'File renamed in {INVOICES_FOLDER}: expected "{fn}", found "{d_name}".',
                             'folder': INVOICES_FOLDER,
                             'severity': 'warning',
+                            'doc_number': doc.get('Number', ''),
+                            'old_filename': fn,
+                            'new_filename': d_name,
                         })
                         found_by_id = True
                         break
@@ -4081,6 +4084,8 @@ def _check_documents_drive_integrity():
                     'message': f'File missing from {INVOICES_FOLDER}: {fn}',
                     'folder': INVOICES_FOLDER,
                     'severity': 'warning',
+                    'doc_number': doc.get('Number', ''),
+                    'filename': fn,
                 })
 
     for fn, doc in db_files_offers.items():
@@ -4095,6 +4100,9 @@ def _check_documents_drive_integrity():
                             'message': f'File renamed in {OFFERS_FOLDER}: expected "{fn}", found "{d_name}".',
                             'folder': OFFERS_FOLDER,
                             'severity': 'warning',
+                            'doc_number': doc.get('Number', ''),
+                            'old_filename': fn,
+                            'new_filename': d_name,
                         })
                         found_by_id = True
                         break
@@ -4104,6 +4112,8 @@ def _check_documents_drive_integrity():
                     'message': f'File missing from {OFFERS_FOLDER}: {fn}',
                     'folder': OFFERS_FOLDER,
                     'severity': 'warning',
+                    'doc_number': doc.get('Number', ''),
+                    'filename': fn,
                 })
 
     # ── Check 2: Files on Drive but not in DB (orphaned / added externally) ──
@@ -4119,6 +4129,9 @@ def _check_documents_drive_integrity():
                 'message': f'File on Drive not in database ({INVOICES_FOLDER}): {d_name}',
                 'folder': INVOICES_FOLDER,
                 'severity': 'info',
+                'drive_file_id': d_id,
+                'filename': d_name,
+                'doc_type': 'Rechnung',
             })
 
     for d_name, d_id in drive_files_offers.items():
@@ -4128,6 +4141,9 @@ def _check_documents_drive_integrity():
                 'message': f'File on Drive not in database ({OFFERS_FOLDER}): {d_name}',
                 'folder': OFFERS_FOLDER,
                 'severity': 'info',
+                'drive_file_id': d_id,
+                'filename': d_name,
+                'doc_type': 'Angebot',
             })
 
     # ── Check 3: Status / prefix mismatch ──
@@ -4139,6 +4155,7 @@ def _check_documents_drive_integrity():
         status = str(doc.get('Status', '')).lower()
         has_notpaid = fn.startswith('notpaid_')
         if status == 'paid' and has_notpaid:
+            new_fn = fn.replace('notpaid_', '', 1)
             discrepancies.append({
                 'type': 'status_mismatch',
                 'message': (f'Status mismatch in {INVOICES_FOLDER}: '
@@ -4146,8 +4163,13 @@ def _check_documents_drive_integrity():
                             f'but file still has notpaid_ prefix: {fn}'),
                 'folder': INVOICES_FOLDER,
                 'severity': 'warning',
+                'drive_file_id': drive_files_invoices.get(fn, ''),
+                'old_filename': fn,
+                'new_filename': new_fn,
+                'doc_number': doc.get('Number', ''),
             })
         elif status != 'paid' and status != 'draft' and not has_notpaid:
+            new_fn = f'notpaid_{fn}'
             discrepancies.append({
                 'type': 'status_mismatch',
                 'message': (f'Status mismatch in {INVOICES_FOLDER}: '
@@ -4155,6 +4177,10 @@ def _check_documents_drive_integrity():
                             f'but file is missing notpaid_ prefix: {fn}'),
                 'folder': INVOICES_FOLDER,
                 'severity': 'warning',
+                'drive_file_id': drive_files_invoices.get(fn, ''),
+                'old_filename': fn,
+                'new_filename': new_fn,
+                'doc_number': doc.get('Number', ''),
             })
 
     return discrepancies
@@ -4210,10 +4236,118 @@ def sync_invoices_dialog():
                 f'<div style="color:{t["text"]};font-size:0.82rem">{d["message"]}</div>'
                 f'</div>', unsafe_allow_html=True)
 
-        st.markdown(
-            f'<div style="font-size:0.75rem;color:{t["muted"]};margin:4px 0 12px 12px;font-style:italic">'
-            f'This is a read-only check. No files or records have been modified.</div>',
-            unsafe_allow_html=True)
+        # ── Apply document discrepancies button ──
+        if st.button("Apply Changes", type="primary", use_container_width=True, key='doc_integrity_apply'):
+            with st.spinner("Applying document changes..."):
+                doc_ok = 0
+                doc_err = 0
+                for d in doc_discrepancies:
+                    try:
+                        if d['type'] == 'missing_from_drive':
+                            # Remove orphaned record from Documents sheet
+                            doc_num = d.get('doc_number', '')
+                            if doc_num:
+                                ws = _get_or_create_documents_sheet()
+                                all_recs = ws.get_all_records()
+                                for idx, rec in enumerate(all_recs):
+                                    if str(rec.get('Number', '')) == str(doc_num):
+                                        ws.delete_rows(idx + 2)
+                                        doc_ok += 1
+                                        break
+                                else:
+                                    doc_err += 1
+                            else:
+                                doc_err += 1
+
+                        elif d['type'] == 'not_in_db':
+                            # Import orphaned Drive file into Documents sheet
+                            fname = d.get('filename', '')
+                            fid = d.get('drive_file_id', '')
+                            dtype = d.get('doc_type', 'Angebot')
+                            if fname and fid:
+                                # Parse doc number from filename
+                                stem = fname.rsplit('.', 1)[0]
+                                parts = stem.split('_')
+                                raw_num = parts[-1] if parts else stem
+                                # Strip RE/AG prefix for clean number
+                                doc_num_clean = raw_num
+                                for pfx in ('RE', 'AG'):
+                                    if raw_num.startswith(pfx):
+                                        doc_num_clean = raw_num
+                                        break
+
+                                ws = _get_or_create_documents_sheet()
+                                now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                status = 'sent'
+                                if fname.startswith('notpaid_'):
+                                    status = 'sent'  # unpaid invoice
+                                doc_id = f"{dtype}_{doc_num_clean}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                                row = [
+                                    doc_id,          # ID
+                                    dtype,           # Type
+                                    doc_num_clean,   # Number
+                                    '',              # Date
+                                    '',              # Client_ID
+                                    '',              # Client_Name
+                                    '',              # Client_Address
+                                    '',              # Project_Title
+                                    '',              # Project_Description
+                                    '',              # Category
+                                    status,          # Status
+                                    '[]',            # Line_Items_JSON
+                                    '',              # Netto
+                                    '',              # USt
+                                    '',              # Brutto
+                                    '',              # Validity_Days
+                                    '',              # Service_Date
+                                    '',              # Payment_Terms
+                                    fid,             # Drive_File_ID
+                                    fname,           # Drive_Filename
+                                    '',              # Source_Offer_Number
+                                    now_str,         # Created_At
+                                    now_str,         # Updated_At
+                                ]
+                                ws.append_row(row, value_input_option='RAW')
+                                doc_ok += 1
+                            else:
+                                doc_err += 1
+
+                        elif d['type'] == 'renamed':
+                            # Update filename in Documents sheet
+                            doc_num = d.get('doc_number', '')
+                            new_fn = d.get('new_filename', '')
+                            if doc_num and new_fn:
+                                _update_document_in_sheet(doc_num, {'Drive_Filename': new_fn})
+                                doc_ok += 1
+                            else:
+                                doc_err += 1
+
+                        elif d['type'] == 'status_mismatch':
+                            # Rename file on Drive to match status
+                            fid = d.get('drive_file_id', '')
+                            new_fn = d.get('new_filename', '')
+                            doc_num = d.get('doc_number', '')
+                            if fid and new_fn:
+                                _drive_rename_file(fid, new_fn)
+                                if doc_num:
+                                    _update_document_in_sheet(doc_num, {'Drive_Filename': new_fn})
+                                doc_ok += 1
+                            else:
+                                doc_err += 1
+                        else:
+                            pass  # Unknown type, skip
+                    except Exception:
+                        doc_err += 1
+
+                _invalidate_documents_cache()
+                _invalidate_data_caches()
+                _log_activity('Doc Sync', f"{doc_ok} fix(es) applied, {doc_err} error(s)")
+                if doc_err:
+                    st.warning(f"Applied {doc_ok} fix(es). {doc_err} could not be applied.")
+                else:
+                    st.success(f"All {doc_ok} fix(es) applied successfully.")
+                import time; time.sleep(0.8)
+                st.rerun()
 
     st.markdown(f'<hr style="border:none;border-top:1px solid {t["border"]};margin:16px 0">', unsafe_allow_html=True)
 

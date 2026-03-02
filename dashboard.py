@@ -1183,12 +1183,12 @@ def chart_layout(fig, height=400, **kw):
     return fig
 
 
-def metric_card(label, value, sub=None, color_class=''):
+def metric_card(label, value, sub=None, color_class='', prefix='\u20ac'):
     """Render a styled metric card."""
     if isinstance(value, float):
-        val_str = f"\u20ac{value:,.2f}"
+        val_str = f"{prefix}{value:,.2f}"
     elif isinstance(value, int):
-        val_str = f"\u20ac{value:,}"
+        val_str = f"{prefix}{value:,}"
     else:
         val_str = str(value)
 
@@ -2959,6 +2959,8 @@ def tab_invoices_offers(data):
                     'status': new_status,
                 })
             st.success(f"Status updated to **{new_status}**.")
+            st.session_state['_return_to_invoices'] = True
+            st.session_state['_active_invoices_subtab'] = 0
             st.rerun()
 
     # ── Delete-document dialog ───────────────────────────────────
@@ -2969,6 +2971,8 @@ def tab_invoices_offers(data):
         bc1, bc2 = st.columns(2)
         with bc1:
             if st.button("Cancel", use_container_width=True, key=f'dlg_del_cancel_{doc_number}'):
+                st.session_state['_return_to_invoices'] = True
+                st.session_state['_active_invoices_subtab'] = 0
                 st.rerun()
         with bc2:
             if st.button("Delete", type="primary", use_container_width=True, key=f'dlg_del_ok_{doc_number}'):
@@ -2985,6 +2989,8 @@ def tab_invoices_offers(data):
                 _delete_document_meta(doc_number)
                 _invalidate_data_caches()
                 st.success(f"**{doc_number}** deleted.")
+                st.session_state['_return_to_invoices'] = True
+                st.session_state['_active_invoices_subtab'] = 0
                 st.rerun()
 
     # ── Convert Offer to Invoice dialog ───────────────────────
@@ -3131,6 +3137,8 @@ def tab_invoices_offers(data):
                 st.download_button("Download Invoice PDF", data=pdf_bytes,
                                   file_name=filename, mime='application/pdf',
                                   key='conv_dl')
+                st.session_state['_return_to_invoices'] = True
+                st.session_state['_active_invoices_subtab'] = 0
                 st.rerun()
             except Exception as e:
                 st.error(f"Conversion failed: {e}")
@@ -3147,17 +3155,17 @@ def tab_invoices_offers(data):
         t = _t()
         all_docs = _build_doc_list()
 
-        # KPI calculations
+        # KPI calculations (use Netto to match Income tab logic)
         total_offers = sum(1 for d in all_docs if d['type'] == 'Offer')
         total_invoices = sum(1 for d in all_docs if d['type'] == 'Invoice')
-        revenue_paid = sum(d['amount'] for d in all_docs if d['type'] == 'Invoice' and d['status'] == 'PAID')
-        pending_amount = sum(d['amount'] for d in all_docs if d['status'] in ('SENT', 'DRAFT'))
+        revenue_paid = sum(d['netto'] for d in all_docs if d['type'] == 'Invoice' and d['status'] == 'PAID')
+        pending_amount = sum(d['netto'] for d in all_docs if d['type'] == 'Invoice' and d['status'] in ('SENT', 'DRAFT'))
 
         k1, k2, k3, k4 = st.columns(4)
         with k1:
-            metric_card("Total Offers", total_offers)
+            metric_card("Total Offers", total_offers, prefix='')
         with k2:
-            metric_card("Total Invoices", total_invoices)
+            metric_card("Total Invoices", total_invoices, prefix='')
         with k3:
             metric_card("Revenue (Paid)", revenue_paid, color_class='green')
         with k4:
@@ -3219,7 +3227,7 @@ def tab_invoices_offers(data):
             _t_text2 = t["text_secondary"]
             _t_border = t["border"]
             _hdr_style = f"font-size:0.65rem;font-weight:600;letter-spacing:0.06em;color:{_t_muted};font-family:{FONT}"
-            hdr_cols = st.columns([1.2, 0.8, 1.5, 1.5, 1.2, 1, 0.8, 2])
+            hdr_cols = st.columns([1.3, 0.7, 1.4, 1.4, 1, 0.9, 0.7, 2.8])
             hdr_labels = ['NUMBER', 'TYPE', 'CLIENT', 'PROJECT', 'AMOUNT', 'DATE', 'STATUS', 'ACTIONS']
             for hc, hl in zip(hdr_cols, hdr_labels):
                 with hc:
@@ -3247,7 +3255,7 @@ def tab_invoices_offers(data):
                 _doc_status = doc["status"]
                 _badge_style = f"color:{s_color};background:rgba({_sc_rgba},0.15);padding:2px 10px;border-radius:10px;font-size:0.72rem;font-weight:600"
 
-                rc = st.columns([1.2, 0.8, 1.5, 1.5, 1.2, 1, 0.8, 2])
+                rc = st.columns([1.3, 0.7, 1.4, 1.4, 1, 0.9, 0.7, 2.8])
                 with rc[0]:
                     st.markdown(f'<span style="{_style_bold}">{dn}</span>', unsafe_allow_html=True)
                 with rc[1]:
@@ -3268,7 +3276,7 @@ def tab_invoices_offers(data):
                 with rc[7]:
                     bc1, bc2, bc3, bc4 = st.columns(4)
                     with bc1:
-                        if st.button("📄", key=f"pdf_{dn}", help="Download PDF"):
+                        if st.button("Download", key=f"pdf_{dn}", help="Download PDF"):
                             pdf_bytes = None
                             try:
                                 if doc['type'] == 'Offer':
@@ -3282,7 +3290,7 @@ def tab_invoices_offers(data):
                                         if search_key in f['name'] and f['name'].endswith('.pdf'):
                                             pdf_bytes = _drive_download_bytes(f['id'])
                                             st.download_button(
-                                                "⬇",
+                                                "Save",
                                                 data=pdf_bytes,
                                                 file_name=f['name'],
                                                 mime='application/pdf',
@@ -3294,7 +3302,7 @@ def tab_invoices_offers(data):
                             except Exception:
                                 st.caption("Err")
                     with bc2:
-                        if st.button("✏️", key=f"edit_{dn}", help="Edit"):
+                        if st.button("Edit", key=f"edit_{dn}", help="Edit"):
                             meta = _get_document_meta(dn)
                             if meta:
                                 if doc['type'] == 'Offer':
@@ -3306,10 +3314,10 @@ def tab_invoices_offers(data):
                                 st.toast("No editable metadata found.")
                     with bc3:
                         if doc['type'] == 'Offer' and doc['status'] != 'DRAFT':
-                            btn_label = "🔄"
+                            btn_label = "Convert"
                             btn_help = "Convert to Invoice"
                         else:
-                            btn_label = "📊"
+                            btn_label = "Status"
                             btn_help = "Change Status"
                         if st.button(btn_label, key=f"status_{dn}", help=btn_help):
                             if doc['type'] == 'Offer' and doc['status'] != 'DRAFT':
@@ -3317,7 +3325,7 @@ def tab_invoices_offers(data):
                             else:
                                 _dlg_change_status(dn, doc['type'], doc['status'])
                     with bc4:
-                        if st.button("🗑", key=f"del_{dn}", help="Delete"):
+                        if st.button("Delete", key=f"del_{dn}", help="Delete"):
                             _dlg_delete_doc(dn, doc['type'], doc['source'])
 
     # ────────────────────────────────────────────────────────────
@@ -3326,6 +3334,7 @@ def tab_invoices_offers(data):
     with sub1:
         t = _t()
         st.markdown("#### Create Invoice (Rechnung)")
+        st.caption("\\* Required fields")
         st.caption("Generate a professional PDF invoice and save to Google Drive.")
 
         # Check for edit pre-fill
@@ -3343,7 +3352,7 @@ def tab_invoices_offers(data):
                         if cn == edit_client_name:
                             default_client_idx = i
                             break
-                sel_client_idx = st.selectbox("Client", range(len(client_names)),
+                sel_client_idx = st.selectbox("Client *", range(len(client_names)),
                                                format_func=lambda i: client_names[i],
                                                index=default_client_idx,
                                                key='inv_client_sel')
@@ -3356,7 +3365,7 @@ def tab_invoices_offers(data):
                                                     height=68, key='inv_client_addr')
                     inv_client_id = sel_client['id']
                 else:
-                    inv_client_name = st.text_input("Client Name (new)",
+                    inv_client_name = st.text_input("Client Name *",
                                                      value=str(edit_inv.get('Client', '')) if edit_inv and default_client_idx == 0 else '',
                                                      key='inv_client_name_new')
                     inv_client_addr = st.text_area("Client Address", height=68,
@@ -3368,7 +3377,7 @@ def tab_invoices_offers(data):
         with st.container(border=True):
             ci3, ci4 = st.columns(2)
             with ci3:
-                inv_title = st.text_input("Project Title",
+                inv_title = st.text_input("Project Title *",
                                            value=str(edit_inv.get('Project', '')) if edit_inv else '',
                                            key='inv_title')
             with ci4:
@@ -3378,7 +3387,7 @@ def tab_invoices_offers(data):
                         default_date = datetime.strptime(str(edit_inv['Date']), '%Y-%m-%d')
                     except Exception:
                         pass
-                inv_date = st.date_input("Invoice Date", value=default_date, key='inv_date')
+                inv_date = st.date_input("Invoice Date *", value=default_date, key='inv_date')
 
         # Container 3: Project Description
         with st.container(border=True):
@@ -3461,7 +3470,7 @@ def tab_invoices_offers(data):
         for idx, item in enumerate(st.session_state['inv_items']):
             ic1, ic2, ic3, ic4, ic5 = st.columns([3, 1, 1, 1.5, 0.5])
             with ic1:
-                item['description'] = st.text_input("Description", value=item['description'],
+                item['description'] = st.text_input("Description *", value=item['description'],
                                                      key=f'inv_item_desc_{idx}')
             with ic2:
                 item['qty'] = st.number_input("Qty", value=float(item['qty']), min_value=0.0,
@@ -3483,11 +3492,15 @@ def tab_invoices_offers(data):
 
         if items_to_remove is not None:
             st.session_state['inv_items'].pop(items_to_remove)
+            st.session_state['_return_to_invoices'] = True
+            st.session_state['_active_invoices_subtab'] = 1
             st.rerun()
 
         if st.button("+ Add Line Item", key='inv_add_line'):
             st.session_state['inv_items'].append({'description': '', 'detail': '', 'qty': 1.0,
                                                    'unit': 'pcs', 'unit_price': 0.0})
+            st.session_state['_return_to_invoices'] = True
+            st.session_state['_active_invoices_subtab'] = 1
             st.rerun()
 
         # Calculate totals
@@ -3510,12 +3523,16 @@ def tab_invoices_offers(data):
         # Totals display
         st.markdown("---")
         tc1, tc2, tc3 = st.columns(3)
+        # Replace st.metric() with themed markdown
+        t = _t()
+        _tc = t["text"]
+        _tc_muted = t["text_secondary"]
         with tc1:
-            st.metric("Subtotal (Netto)", f"{_fmt_eur_de(subtotal)} EUR")
+            st.markdown(f'<div style="font-size:0.7rem;color:{_tc_muted};font-weight:500">Subtotal (Netto)</div><div style="font-size:1.1rem;font-weight:600;color:{_tc}">{_fmt_eur_de(subtotal)} EUR</div>', unsafe_allow_html=True)
         with tc2:
-            st.metric("USt. 19%", f"{_fmt_eur_de(vat)} EUR")
+            st.markdown(f'<div style="font-size:0.7rem;color:{_tc_muted};font-weight:500">USt. 19%</div><div style="font-size:1.1rem;font-weight:600;color:{_tc}">{_fmt_eur_de(vat)} EUR</div>', unsafe_allow_html=True)
         with tc3:
-            st.metric("Total (Brutto)", f"{_fmt_eur_de(total)} EUR")
+            st.markdown(f'<div style="font-size:0.7rem;color:{_tc_muted};font-weight:500">Total (Brutto)</div><div style="font-size:1.1rem;font-weight:600;color:{_tc}">{_fmt_eur_de(total)} EUR</div>', unsafe_allow_html=True)
 
         st.markdown("---")
 
@@ -3649,6 +3666,7 @@ def tab_invoices_offers(data):
         t = _t()
         st.markdown("#### Create Offer (Angebot)")
         st.caption("Generate a professional PDF offer and save to Google Drive.")
+        st.caption("\\* Required fields")
 
         # Check for edit pre-fill
         edit_off = st.session_state.pop('edit_offer', None)
@@ -3665,7 +3683,7 @@ def tab_invoices_offers(data):
                         if cn == edit_off_client:
                             default_off_client = i
                             break
-                off_sel_idx = st.selectbox("Client", range(len(off_client_names)),
+                off_sel_idx = st.selectbox("Client *", range(len(off_client_names)),
                                             format_func=lambda i: off_client_names[i],
                                             index=default_off_client,
                                             key='off_client_sel')
@@ -3678,7 +3696,7 @@ def tab_invoices_offers(data):
                                                     height=68, key='off_client_addr')
                     off_client_id = off_sel_client['id']
                 else:
-                    off_client_name = st.text_input("Client Name (new)",
+                    off_client_name = st.text_input("Client Name *",
                                                      value=str(edit_off.get('Client', '')) if edit_off and default_off_client == 0 else '',
                                                      key='off_client_name_new')
                     off_client_addr = st.text_area("Client Address", height=68,
@@ -3690,7 +3708,7 @@ def tab_invoices_offers(data):
         with st.container(border=True):
             co3, co4 = st.columns(2)
             with co3:
-                off_title = st.text_input("Project Title",
+                off_title = st.text_input("Project Title *",
                                            value=str(edit_off.get('Project', '')) if edit_off else '',
                                            key='off_title')
             with co4:
@@ -3700,7 +3718,7 @@ def tab_invoices_offers(data):
                         default_off_date = datetime.strptime(str(edit_off['Date']), '%Y-%m-%d')
                     except Exception:
                         pass
-                off_date = st.date_input("Offer Date", value=default_off_date, key='off_date')
+                off_date = st.date_input("Offer Date *", value=default_off_date, key='off_date')
 
         # Container 3: Description
         with st.container(border=True):
@@ -3783,11 +3801,15 @@ def tab_invoices_offers(data):
 
         if off_items_remove is not None:
             st.session_state['off_items'].pop(off_items_remove)
+            st.session_state['_return_to_invoices'] = True
+            st.session_state['_active_invoices_subtab'] = 2
             st.rerun()
 
         if st.button("+ Add Line Item", key='off_add_line'):
             st.session_state['off_items'].append({'description': '', 'detail': '', 'qty': 1.0,
                                                    'unit': 'pcs', 'unit_price': 0.0})
+            st.session_state['_return_to_invoices'] = True
+            st.session_state['_active_invoices_subtab'] = 2
             st.rerun()
 
         # Calculate totals
@@ -3809,12 +3831,16 @@ def tab_invoices_offers(data):
 
         st.markdown("---")
         otc1, otc2, otc3 = st.columns(3)
+        # Replace st.metric() with themed markdown
+        t = _t()
+        _tc = t["text"]
+        _tc_muted = t["text_secondary"]
         with otc1:
-            st.metric("Subtotal (Netto)", f"{_fmt_eur_de(off_subtotal)} EUR")
+            st.markdown(f'<div style="font-size:0.7rem;color:{_tc_muted};font-weight:500">Subtotal (Netto)</div><div style="font-size:1.1rem;font-weight:600;color:{_tc}">{_fmt_eur_de(off_subtotal)} EUR</div>', unsafe_allow_html=True)
         with otc2:
-            st.metric("USt. 19%", f"{_fmt_eur_de(off_vat)} EUR")
+            st.markdown(f'<div style="font-size:0.7rem;color:{_tc_muted};font-weight:500">USt. 19%</div><div style="font-size:1.1rem;font-weight:600;color:{_tc}">{_fmt_eur_de(off_vat)} EUR</div>', unsafe_allow_html=True)
         with otc3:
-            st.metric("Total (Brutto)", f"{_fmt_eur_de(off_total)} EUR")
+            st.markdown(f'<div style="font-size:0.7rem;color:{_tc_muted};font-weight:500">Total (Brutto)</div><div style="font-size:1.1rem;font-weight:600;color:{_tc}">{_fmt_eur_de(off_total)} EUR</div>', unsafe_allow_html=True)
 
         st.markdown("---")
 
@@ -3999,6 +4025,8 @@ def tab_invoices_offers(data):
                     _save_client_to_sheet(new_client)
                     _log_activity('CLIENT_ADDED', f"{new_client['id']} | {new_client['name']}")
                     st.success(f"Client **{new_client['name']}** ({new_client['id']}) added.")
+                    st.session_state['_return_to_invoices'] = True
+                    st.session_state['_active_invoices_subtab'] = 3
                     st.rerun()
 
 
@@ -5959,7 +5987,7 @@ def main():
     date_str = f"({today.strftime('%d.%m.%y')})"
     t = _t()
 
-    h1, h2, h3, h4 = st.columns([4, 1.5, 1.5, 0.6])
+    h1, h2, h3, h4 = st.columns([3.5, 1.5, 1.5, 0.6])
     with h1:
         st.markdown(f"""
         <div style="text-align:left;padding-top:0.6rem">
@@ -5967,9 +5995,11 @@ def main():
         </div>
         """, unsafe_allow_html=True)
     with h2:
-        update_clicked = st.button("Update", key="update_btn", type="primary")
+        update_clicked = st.button("Update", key="update_btn", type="primary",
+                                   use_container_width=True)
     with h3:
-        upload_clicked = st.button("+ Upload", key="upload_btn", type="primary")
+        upload_clicked = st.button("Upload", key="upload_btn", type="primary",
+                                   use_container_width=True)
     with h4:
         st.markdown('<div class="theme-toggle">', unsafe_allow_html=True)
         icon = '\u2600\ufe0f' if st.session_state['theme'] == 'dark' else '\U0001f319'
@@ -6050,6 +6080,29 @@ def main():
             <script>
                 const tabs = window.parent.document.querySelectorAll('button[data-baseweb="tab"]');
                 if (tabs.length > 1) tabs[1].click();
+            </script>
+        """, height=0)
+
+    # Auto-navigate back to Invoices/Offers tab (+ sub-tab) after dialog actions
+    if st.session_state.get('_return_to_invoices'):
+        st.session_state['_return_to_invoices'] = False
+        _sub_idx = st.session_state.get('_active_invoices_subtab', 0)
+        components.html(f"""
+            <script>
+                (function() {{
+                    const mainTabs = window.parent.document.querySelectorAll('button[data-baseweb="tab"]');
+                    if (mainTabs.length > 3) {{
+                        mainTabs[3].click();
+                        setTimeout(function() {{
+                            const allTabs = window.parent.document.querySelectorAll('button[data-baseweb="tab"]');
+                            // Sub-tabs start after the 7 main tabs
+                            const subIdx = 7 + {_sub_idx};
+                            if (allTabs.length > subIdx) {{
+                                allTabs[subIdx].click();
+                            }}
+                        }}, 100);
+                    }}
+                }})();
             </script>
         """, height=0)
 

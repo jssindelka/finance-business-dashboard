@@ -4896,27 +4896,40 @@ def _sanitize_for_pdf(text):
 
 
 def _generate_document_pdf(form_data, doc_number):
-    """Generate a PDF document matching the reference invoice layout.
-    Returns PDF bytes on success, None on failure."""
+    """Generate a professional PDF matching the angebot-invoice-template.
+    Returns PDF bytes."""
     biz = BIZ_INFO
     is_invoice = form_data['mode'] == 'invoice'
     doc_type_label = 'INVOICE' if is_invoice else 'ESTIMATE'
 
+    # Format doc number for display: AG2026028 → AG-2026028
+    display_number = doc_number
+    for pfx in ('AG', 'RE'):
+        if doc_number.startswith(pfx) and len(doc_number) > len(pfx):
+            display_number = f'{pfx}-{doc_number[len(pfx):]}'
+            break
+
+    # Euro sign: encode via cp1252 so built-in Helvetica renders it correctly
+    try:
+        eur = '\u20ac'.encode('cp1252').decode('latin-1')  # → byte 0x80 → € in PDF
+    except Exception:
+        eur = 'EUR'
+
     pdf = FPDF(orientation='P', unit='mm', format='A4')
-    pdf.set_auto_page_break(auto=True, margin=25)
+    pdf.set_auto_page_break(auto=False)  # Prevent content spilling across empty pages
     pdf.add_page()
 
-    # Page dimensions
-    pw = 210  # A4 width
-    ml = 25   # left margin
-    mr = 20   # right margin
+    pw = 210   # A4 width
+    ml = 25    # left margin
+    mr = 20    # right margin
     usable = pw - ml - mr
+    GREEN = (11, 71, 20)  # #0B4714
 
-    # ── Green accent line at very top ──
-    pdf.set_fill_color(11, 71, 20)  # #0B4714
+    # ── Green accent bar at top ──
+    pdf.set_fill_color(*GREEN)
     pdf.rect(0, 0, pw, 3, 'F')
 
-    # ── Header: Josef Sindelka (top right) ──
+    # ── Header: name + contact (right-aligned) ──
     pdf.set_y(15)
     pdf.set_font('Helvetica', 'B', 24)
     pdf.set_text_color(0, 0, 0)
@@ -4926,14 +4939,14 @@ def _generate_document_pdf(form_data, doc_number):
     pdf.cell(usable, 4, biz['email'], align='R', new_x='LMARGIN', new_y='NEXT')
     pdf.cell(usable, 4, biz['website'], align='R', new_x='LMARGIN', new_y='NEXT')
 
-    # ── Sender line (small, above client) ──
+    # ── Sender line (small grey, middle-dot separators) ──
     pdf.set_y(45)
     pdf.set_font('Helvetica', '', 7)
     pdf.set_text_color(100, 100, 100)
-    sender_line = f"{biz['name']}  -  {biz['street']}  -  {biz['city']}"
-    pdf.cell(usable / 2, 4, _sanitize_for_pdf(sender_line), new_x='LMARGIN', new_y='NEXT')
+    sender_line = f'{biz["name"]}  \u00b7  {biz["street"]}  \u00b7  {biz["city"]}'
+    pdf.cell(usable * 0.55, 4, sender_line, new_x='LMARGIN', new_y='NEXT')
 
-    # ── Client block (left side) ──
+    # ── Client block (left) ──
     pdf.set_y(52)
     pdf.set_font('Helvetica', 'B', 11)
     pdf.set_text_color(0, 0, 0)
@@ -4941,26 +4954,25 @@ def _generate_document_pdf(form_data, doc_number):
     pdf.cell(usable / 2, 6, client_name, new_x='LMARGIN', new_y='NEXT')
     pdf.set_font('Helvetica', '', 10)
     client_addr = _sanitize_for_pdf(form_data.get('client_address', ''))
-    for line in client_addr.split(','):
-        line = line.strip()
-        if line:
-            pdf.cell(usable / 2, 5, line, new_x='LMARGIN', new_y='NEXT')
+    for addr_line in client_addr.split(','):
+        addr_line = addr_line.strip()
+        if addr_line:
+            pdf.cell(usable / 2, 5, addr_line, new_x='LMARGIN', new_y='NEXT')
 
-    # ── Document metadata (right side, aligned with client block) ──
+    # ── Metadata table (right side) ──
     meta_x = ml + usable / 2 + 10
-    meta_w_label = 35
-    meta_w_value = usable / 2 - 10 - meta_w_label
+    meta_w_label = 30
+    meta_w_val = usable / 2 - 10 - meta_w_label
     meta_y = 52
-
-    pdf.set_font('Helvetica', '', 10)
-    pdf.set_text_color(80, 80, 80)
 
     meta_items = []
     if is_invoice:
-        meta_items.append(('Invoice No.', doc_number))
+        meta_items.append(('Invoice No.', display_number))
     else:
-        meta_items.append(('Estimate No.', doc_number))
-    meta_items.append(('Client No.', form_data.get('client_id', '')))
+        meta_items.append(('Estimate No.', display_number))
+    cid_raw = str(form_data.get('client_id', ''))
+    cid = f'K{cid_raw}' if cid_raw and not cid_raw.startswith('K') else cid_raw
+    meta_items.append(('Client No.', cid))
     meta_items.append(('Date', form_data.get('date', '')))
 
     if is_invoice:
@@ -4971,176 +4983,175 @@ def _generate_document_pdf(form_data, doc_number):
         validity = form_data.get('validity_days', 30)
         date_obj = form_data.get('date_obj')
         if date_obj:
-            valid_until = date_obj + timedelta(days=int(validity))
-            meta_items.append(('Valid until', valid_until.strftime('%d.%m.%Y')))
+            vu = date_obj + timedelta(days=int(validity))
+            meta_items.append(('Valid until', vu.strftime('%d.%m.%Y')))
 
     for label, value in meta_items:
         pdf.set_xy(meta_x, meta_y)
         pdf.set_font('Helvetica', '', 10)
         pdf.set_text_color(80, 80, 80)
-        pdf.cell(meta_w_label, 6, label, new_x='END')
+        pdf.cell(meta_w_label, 7, label, new_x='END')
         pdf.set_font('Helvetica', 'B', 10)
         pdf.set_text_color(0, 0, 0)
-        pdf.cell(meta_w_value, 6, _sanitize_for_pdf(str(value)), align='R')
+        pdf.cell(meta_w_val, 7, _sanitize_for_pdf(str(value)), align='R')
         meta_y += 7
 
-    # ── Document type heading ──
-    heading_y = max(pdf.get_y(), meta_y) + 15
+    # ── Document type heading — GREEN ──
+    heading_y = max(pdf.get_y(), meta_y) + 12
     pdf.set_y(heading_y)
     pdf.set_font('Helvetica', 'B', 20)
-    pdf.set_text_color(0, 0, 0)
+    pdf.set_text_color(*GREEN)
     pdf.cell(usable, 10, doc_type_label, new_x='LMARGIN', new_y='NEXT')
+    pdf.ln(2)
 
-    # ── Project subtitle ──
+    # ── Project subtitle (bold) ──
     project_title = form_data.get('project_title', '')
     if project_title or client_name:
         pdf.set_font('Helvetica', 'B', 11)
         pdf.set_text_color(0, 0, 0)
-        subtitle = _sanitize_for_pdf(project_title if project_title else client_name)
-        pdf.cell(usable, 7, subtitle, new_x='LMARGIN', new_y='NEXT')
-        pdf.ln(2)
+        sub = _sanitize_for_pdf(project_title if project_title else client_name)
+        pdf.cell(usable, 7, sub, new_x='LMARGIN', new_y='NEXT')
 
-    # ── Project description ──
+    # ── Location & date line ──
+    date_obj = form_data.get('date_obj')
+    doc_date = form_data.get('date', '')
+    city_name = biz['city'].split()[-1] if biz['city'] else ''
+    pdf.set_font('Helvetica', '', 9)
+    pdf.set_text_color(100, 100, 100)
+    if date_obj:
+        day = date_obj.day
+        sfx = 'th' if 11 <= day <= 13 else {1: 'st', 2: 'nd', 3: 'rd'}.get(day % 10, 'th')
+        dstr = f'{date_obj.strftime("%B")} {day}{sfx}, {date_obj.year}'
+        loc = f'{city_name}, Germany  \u00b7  Date: {dstr}'
+    elif doc_date:
+        loc = f'{city_name}, Germany  \u00b7  Date: {doc_date}'
+    else:
+        loc = f'{city_name}, Germany'
+    pdf.cell(usable, 5, loc, new_x='LMARGIN', new_y='NEXT')
+    pdf.ln(4)
+
+    # ── Description paragraph ──
     desc = form_data.get('project_description', '')
     if desc:
         pdf.set_font('Helvetica', '', 9)
         pdf.set_text_color(80, 80, 80)
-        pdf.multi_cell(usable, 4, _sanitize_for_pdf(desc), new_x='LMARGIN', new_y='NEXT')
-        pdf.ln(4)
+        pdf.multi_cell(usable, 4.5, _sanitize_for_pdf(desc), new_x='LMARGIN', new_y='NEXT')
+        pdf.ln(6)
 
     # ── Line items table ──
     line_items = form_data.get('line_items', [])
-    col_widths = [12, usable * 0.40, 18, 25, 30, 30]  # Pos, Desc, Qty, Unit, Price, Total
-    # Adjust description width to fill remaining space
-    col_widths[1] = usable - col_widths[0] - col_widths[2] - col_widths[3] - col_widths[4] - col_widths[5]
+    cw = [12, 0, 18, 25, 30, 30]  # Pos, Desc(auto), Qty, Unit, Price, Total
+    cw[1] = usable - sum(cw)
+    aligns = ['L', 'L', 'R', 'L', 'R', 'R']
 
     # Table header
     pdf.set_font('Helvetica', 'B', 9)
     pdf.set_text_color(80, 80, 80)
     pdf.set_fill_color(245, 245, 245)
-    headers = ['Pos.', 'Description', 'Qty', 'Unit', 'Unit Price', 'Total EUR']
-    aligns = ['L', 'L', 'R', 'L', 'R', 'R']
-    for i, (hdr, w, a) in enumerate(zip(headers, col_widths, aligns)):
-        pdf.cell(w, 8, hdr, align=a, fill=True,
-                 new_x='END' if i < len(headers) - 1 else 'LMARGIN',
-                 new_y='LAST' if i < len(headers) - 1 else 'NEXT')
-
-    # Header bottom border
+    hdrs = ['Pos.', 'Description', 'Qty', 'Unit', 'Unit Price', f'Total {eur}']
+    for i, (h, w, a) in enumerate(zip(hdrs, cw, aligns)):
+        pdf.cell(w, 8, h, align=a, fill=True,
+                 new_x='END' if i < 5 else 'LMARGIN',
+                 new_y='LAST' if i < 5 else 'NEXT')
     pdf.set_draw_color(200, 200, 200)
     pdf.line(ml, pdf.get_y(), pw - mr, pdf.get_y())
 
-    # Table rows
-    pdf.set_font('Helvetica', '', 10)
-    pdf.set_text_color(0, 0, 0)
+    # Data rows — description column is BOLD
     for idx, item in enumerate(line_items):
-        desc_text = _sanitize_for_pdf(item.get('desc', ''))
-        qty_val = _parse_eur_input(item.get('qty', '0'))
-        price_val = _parse_eur_input(item.get('price', '0'))
-        unit_text = _sanitize_for_pdf(item.get('unit', 'pcs'))
-        line_total = qty_val * price_val
+        d_text = _sanitize_for_pdf(item.get('desc', ''))
+        qty_v = _parse_eur_input(item.get('qty', '0'))
+        prc_v = _parse_eur_input(item.get('price', '0'))
+        u_text = _sanitize_for_pdf(item.get('unit', 'pcs'))
+        tot_v = qty_v * prc_v
+        qty_s = f'{int(qty_v):,}'.replace(',', '.') if qty_v == int(qty_v) else _fmt_eur_pdf(qty_v)
+        row = [str(idx + 1), d_text, qty_s, u_text, _fmt_eur_pdf(prc_v), _fmt_eur_pdf(tot_v)]
 
-        row_data = [
-            str(idx + 1),
-            desc_text,
-            _fmt_eur_pdf(qty_val) if qty_val != int(qty_val) else str(int(qty_val)) if qty_val == int(qty_val) and qty_val < 1000 else _fmt_eur_pdf(qty_val),
-            unit_text,
-            _fmt_eur_pdf(price_val),
-            _fmt_eur_pdf(line_total),
-        ]
-
-        # Format qty nicely
-        if qty_val == int(qty_val):
-            row_data[2] = f'{int(qty_val):,}'.replace(',', '.')
-        else:
-            row_data[2] = _fmt_eur_pdf(qty_val)
-
-        y_before = pdf.get_y()
-        for i, (val, w, a) in enumerate(zip(row_data, col_widths, aligns)):
+        for i, (val, w, a) in enumerate(zip(row, cw, aligns)):
+            if i == 1:
+                pdf.set_font('Helvetica', 'B', 10)   # Description bold
+            else:
+                pdf.set_font('Helvetica', '', 10)
+            pdf.set_text_color(0, 0, 0)
             pdf.cell(w, 8, val, align=a,
-                     new_x='END' if i < len(row_data) - 1 else 'LMARGIN',
-                     new_y='LAST' if i < len(row_data) - 1 else 'NEXT')
-
-        # Row bottom border
+                     new_x='END' if i < 5 else 'LMARGIN',
+                     new_y='LAST' if i < 5 else 'NEXT')
         pdf.set_draw_color(235, 235, 235)
         pdf.line(ml, pdf.get_y(), pw - mr, pdf.get_y())
 
     # ── Totals ──
-    pdf.ln(6)
-    totals_x = pw - mr - 80
+    pdf.ln(4)
+    tx = pw - mr - 80
     netto = form_data.get('netto', 0)
-    ust = form_data.get('ust', 0)
+    ust_val = form_data.get('ust', 0)
     brutto = form_data.get('brutto', 0)
 
-    # Subtotal
-    pdf.set_xy(totals_x, pdf.get_y())
+    # Subtotal (Netto)
+    pdf.set_xy(tx, pdf.get_y())
     pdf.set_font('Helvetica', '', 10)
     pdf.set_text_color(80, 80, 80)
     pdf.cell(40, 7, 'Subtotal (Netto)', align='R', new_x='END')
     pdf.set_text_color(0, 0, 0)
-    pdf.cell(40, 7, f'{_fmt_eur_pdf(netto)} EUR', align='R', new_x='LMARGIN', new_y='NEXT')
+    pdf.cell(40, 7, f'{_fmt_eur_pdf(netto)} {eur}', align='R', new_x='LMARGIN', new_y='NEXT')
 
-    # USt
-    pdf.set_xy(totals_x, pdf.get_y())
+    # USt. 19%
+    pdf.set_xy(tx, pdf.get_y())
     pdf.set_text_color(80, 80, 80)
     pdf.cell(40, 7, 'USt. 19%', align='R', new_x='END')
     pdf.set_text_color(0, 0, 0)
-    pdf.cell(40, 7, f'{_fmt_eur_pdf(ust)} EUR', align='R', new_x='LMARGIN', new_y='NEXT')
+    pdf.cell(40, 7, f'{_fmt_eur_pdf(ust_val)} {eur}', align='R', new_x='LMARGIN', new_y='NEXT')
 
     # Divider
     pdf.set_draw_color(0, 0, 0)
-    pdf.line(totals_x, pdf.get_y() + 1, pw - mr, pdf.get_y() + 1)
-    pdf.ln(3)
+    pdf.line(tx, pdf.get_y() + 1, pw - mr, pdf.get_y() + 1)
+    pdf.ln(4)
 
-    # Grand total
-    pdf.set_xy(totals_x, pdf.get_y())
-    pdf.set_font('Helvetica', 'B', 12)
-    pdf.set_text_color(0, 0, 0)
+    # Grand total — GREEN, larger
+    pdf.set_xy(tx, pdf.get_y())
+    pdf.set_font('Helvetica', 'B', 13)
+    pdf.set_text_color(*GREEN)
     pdf.cell(40, 8, 'Total (Brutto)', align='R', new_x='END')
-    pdf.cell(40, 8, f'{_fmt_eur_pdf(brutto)} EUR', align='R', new_x='LMARGIN', new_y='NEXT')
+    pdf.cell(40, 8, f'{_fmt_eur_pdf(brutto)} {eur}', align='R', new_x='LMARGIN', new_y='NEXT')
+    pdf.set_text_color(0, 0, 0)
 
-    # ── Payment terms (invoice only) ──
+    # ── Payment terms (invoice) / Validity (offer) ──
     if is_invoice:
         pt = form_data.get('payment_terms', 'Zahlbar sofort, rein netto')
         if pt:
-            pdf.ln(10)
+            pdf.ln(8)
             pdf.set_font('Helvetica', '', 9)
             pdf.set_text_color(80, 80, 80)
             pdf.cell(usable, 5, _sanitize_for_pdf(f'Payment terms: {pt}'), new_x='LMARGIN', new_y='NEXT')
-
-    # ── Offer validity (offer only) ──
-    if not is_invoice:
+    else:
         validity = form_data.get('validity_days', 30)
-        date_obj = form_data.get('date_obj')
-        pdf.ln(10)
+        d_obj = form_data.get('date_obj')
+        pdf.ln(8)
         pdf.set_font('Helvetica', '', 9)
         pdf.set_text_color(80, 80, 80)
-        if date_obj:
-            valid_until = date_obj + timedelta(days=int(validity))
-            pdf.cell(usable, 5, f'This offer is valid until {valid_until.strftime("%d.%m.%Y")} ({validity} days).', new_x='LMARGIN', new_y='NEXT')
+        if d_obj:
+            vu = d_obj + timedelta(days=int(validity))
+            pdf.cell(usable, 5, f'This offer is valid until {vu.strftime("%d.%m.%Y")} ({validity} days).', new_x='LMARGIN', new_y='NEXT')
         else:
             pdf.cell(usable, 5, f'This offer is valid for {validity} days from the date above.', new_x='LMARGIN', new_y='NEXT')
         pdf.cell(usable, 5, 'Payment terms: Zahlbar sofort, rein netto.', new_x='LMARGIN', new_y='NEXT')
 
-    # ── Footer ──
-    # Position footer at bottom of page
-    footer_y = 260
-    if pdf.get_y() > footer_y - 20:
+    # ── Footer (always at bottom of page) ──
+    footer_y = 265
+    if pdf.get_y() > footer_y - 10:
         pdf.add_page()
-        footer_y = 260
+        pdf.set_fill_color(*GREEN)
+        pdf.rect(0, 0, pw, 3, 'F')
+        footer_y = 265
 
     pdf.set_y(footer_y)
-
-    # Footer divider
     pdf.set_draw_color(200, 200, 200)
     pdf.line(ml, footer_y, pw - mr, footer_y)
-    pdf.ln(4)
+    pdf.ln(3)
 
-    # 3-column footer
     col_w = usable / 3
-    footer_y = pdf.get_y()
+    fy = pdf.get_y()
 
     # Column 1: Business details
-    pdf.set_xy(ml, footer_y)
+    pdf.set_xy(ml, fy)
     pdf.set_font('Helvetica', 'B', 7)
     pdf.set_text_color(0, 0, 0)
     pdf.cell(col_w, 3.5, biz['name'], new_x='LMARGIN', new_y='NEXT')
@@ -5150,31 +5161,30 @@ def _generate_document_pdf(form_data, doc_number):
     pdf.cell(col_w, 3.5, biz['city'], new_x='LMARGIN', new_y='NEXT')
 
     # Column 2: Tax information
-    pdf.set_xy(ml + col_w, footer_y)
+    pdf.set_xy(ml + col_w, fy)
     pdf.set_font('Helvetica', 'B', 7)
     pdf.set_text_color(0, 0, 0)
     pdf.cell(col_w, 3.5, 'Tax Information')
-    pdf.set_xy(ml + col_w, footer_y + 3.5)
+    pdf.set_xy(ml + col_w, fy + 3.5)
     pdf.set_font('Helvetica', '', 7)
     pdf.set_text_color(80, 80, 80)
     pdf.cell(col_w, 3.5, f'USt-IdNr.: {biz["ust_id"]}')
-    pdf.set_xy(ml + col_w, footer_y + 7)
+    pdf.set_xy(ml + col_w, fy + 7)
     pdf.cell(col_w, 3.5, f'Steuernr.: {biz["steuernummer"]}')
 
-    # Column 3: Bank details (always on invoices, optionally on offers)
-    if is_invoice:
-        pdf.set_xy(ml + col_w * 2, footer_y)
-        pdf.set_font('Helvetica', 'B', 7)
-        pdf.set_text_color(0, 0, 0)
-        pdf.cell(col_w, 3.5, 'Bank Details')
-        pdf.set_xy(ml + col_w * 2, footer_y + 3.5)
-        pdf.set_font('Helvetica', '', 7)
-        pdf.set_text_color(80, 80, 80)
-        pdf.cell(col_w, 3.5, f'Bank: {biz["bank"]}')
-        pdf.set_xy(ml + col_w * 2, footer_y + 7)
-        pdf.cell(col_w, 3.5, f'IBAN: {biz["iban"]}')
-        pdf.set_xy(ml + col_w * 2, footer_y + 10.5)
-        pdf.cell(col_w, 3.5, f'BIC: {biz["bic"]}')
+    # Column 3: Bank details (always shown — matches template)
+    pdf.set_xy(ml + col_w * 2, fy)
+    pdf.set_font('Helvetica', 'B', 7)
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(col_w, 3.5, 'Bank Details')
+    pdf.set_xy(ml + col_w * 2, fy + 3.5)
+    pdf.set_font('Helvetica', '', 7)
+    pdf.set_text_color(80, 80, 80)
+    pdf.cell(col_w, 3.5, f'Bank: {biz["bank"]}')
+    pdf.set_xy(ml + col_w * 2, fy + 7)
+    pdf.cell(col_w, 3.5, f'IBAN: {biz["iban"]}')
+    pdf.set_xy(ml + col_w * 2, fy + 10.5)
+    pdf.cell(col_w, 3.5, f'BIC: {biz["bic"]}')
 
     return bytes(pdf.output())
 

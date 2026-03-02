@@ -579,34 +579,42 @@ def _inject_css():
     .badge-draft {{ color: {t['muted']}; background: {t['surface3']}; }}
 
     /* ── Filter Pills (horizontal radio in dashboard) ── */
-    .doc-filter .stRadio > div {{
+    [data-testid="stRadio"] > div {{
         gap: 0.4rem;
         flex-wrap: wrap;
     }}
-    .doc-filter .stRadio > div > label {{
+    [data-testid="stRadio"] > div > label {{
         background: {t['surface']};
         border: 1px solid {t['border']};
         border-radius: 20px;
         padding: 0.35rem 1rem;
-        font-size: 0.72rem;
+        font-size: 0.78rem;
         font-weight: 500;
         font-family: {FONT};
         color: {t['text_secondary']};
         transition: all 0.2s ease;
         cursor: pointer;
     }}
-    .doc-filter .stRadio > div > label:hover {{
+    [data-testid="stRadio"] > div > label:hover {{
         border-color: {t['border_hover']};
         color: {t['text']};
     }}
-    .doc-filter .stRadio > div > label[data-checked="true"],
-    .doc-filter .stRadio > div > label:has(input:checked) {{
+    [data-testid="stRadio"] > div > label[data-checked="true"],
+    [data-testid="stRadio"] > div > label:has(input:checked) {{
         background: {t['text']};
         color: {t['surface']};
         border-color: {t['text']};
+        font-weight: 600;
     }}
-    .doc-filter .stRadio > div > label > div:first-child {{
+    [data-testid="stRadio"] > div > label > div:first-child {{
         display: none;  /* hide default radio circle */
+    }}
+
+    /* ── Dashboard row action buttons ── */
+    [data-testid="stHorizontalBlock"] .stButton > button {{
+        min-height: 0;
+        padding: 0.15rem 0.5rem;
+        font-size: 0.75rem;
     }}
 
     /* ── Container borders (form cards) ── */
@@ -2822,7 +2830,7 @@ def tab_invoices_offers(data):
                     'project': str(r.get('Project', '')),
                     'amount': float(r.get('Brutto (€)', 0) or 0),
                     'netto': float(r.get('Netto (€)', 0) or 0),
-                    'date': str(r.get('Date', '')),
+                    'date': str(r.get('Date', '')).split(' ')[0].split('T')[0],
                     'status': 'PAID',
                     'category': str(r.get('Category', '')),
                     'source': 'income_paid',
@@ -2842,7 +2850,7 @@ def tab_invoices_offers(data):
                     'project': str(r.get('Project', '')),
                     'amount': float(r.get('Brutto (€)', 0) or 0),
                     'netto': float(r.get('Netto (€)', 0) or 0),
-                    'date': str(r.get('Date', '')),
+                    'date': str(r.get('Date', '')).split(' ')[0].split('T')[0],
                     'status': 'SENT',
                     'category': str(r.get('Category', '')),
                     'source': 'income_unpaid',
@@ -2862,7 +2870,7 @@ def tab_invoices_offers(data):
                 'project': str(o.get('Project', '')),
                 'amount': float(o.get('Brutto', 0) or 0),
                 'netto': float(o.get('Netto', 0) or 0),
-                'date': str(o.get('Date', '')),
+                'date': str(o.get('Date', '')).split(' ')[0].split('T')[0],
                 'status': str(o.get('Status', 'SENT')).upper(),
                 'category': str(o.get('Category', '')),
                 'source': 'offer',
@@ -2883,7 +2891,7 @@ def tab_invoices_offers(data):
                 'project': str(m.get('Project', '')),
                 'amount': float(m.get('Brutto', 0) or 0),
                 'netto': float(m.get('Netto', 0) or 0),
-                'date': str(m.get('Date', '')),
+                'date': str(m.get('Date', '')).split(' ')[0].split('T')[0],
                 'status': str(m.get('Status', 'DRAFT')).upper(),
                 'category': str(m.get('Category', '')),
                 'source': 'draft',
@@ -2969,6 +2977,154 @@ def tab_invoices_offers(data):
                 st.success(f"**{doc_number}** deleted.")
                 st.rerun()
 
+    # ── Convert Offer to Invoice dialog ───────────────────────
+    @st.dialog("Convert Offer to Invoice")
+    def _dlg_convert_offer_to_invoice(offer_number):
+        t = _t()
+        # Load offer data
+        offers = _load_offers()
+        offer = None
+        for o in offers:
+            if str(o.get('Offer Number', '')).strip() == offer_number:
+                offer = o
+                break
+
+        if not offer:
+            st.error(f"Offer {offer_number} not found.")
+            return
+
+        st.markdown(f"**Offer:** {offer_number}")
+        _conv_client = offer.get('Client', '')
+        _conv_project = offer.get('Project', '')
+        _conv_brutto = float(offer.get('Brutto', 0) or 0)
+        st.markdown(f"**Client:** {_conv_client}")
+        st.markdown(f"**Project:** {_conv_project}")
+        _conv_amt_str = _fmt_eur_de(_conv_brutto)
+        st.markdown(f"**Amount:** {_conv_amt_str} EUR")
+        st.info("This will create a new **invoice** (unpaid) from this offer. The original offer PDF will be kept in the offers folder.")
+
+        if st.button("Convert to Invoice", type="primary", key=f'dlg_convert_{offer_number}'):
+            try:
+                import json as _json_conv
+
+                # 1. Get new invoice number
+                inv_number = _next_invoice_number()
+                inv_num_raw = inv_number.replace('RE', '')
+
+                # 2. Get offer metadata from DocumentMeta if available
+                meta = _get_document_meta(offer_number)
+
+                # 3. Build invoice data for PDF
+                netto = float(offer.get('Netto', 0) or 0)
+                brutto = _conv_brutto
+                vat = brutto - netto
+
+                # Parse items from offer meta or create a single line item
+                items = []
+                items_json_str = ''
+                if meta and meta.get('Items JSON'):
+                    items_json_str = meta['Items JSON']
+                elif offer.get('Items JSON'):
+                    items_json_str = offer['Items JSON']
+
+                if items_json_str:
+                    try:
+                        items = _json_conv.loads(items_json_str)
+                    except Exception:
+                        items = []
+
+                if not items:
+                    items = [{'pos': 1, 'description': _conv_project or 'Services',
+                              'detail': '', 'qty': 1, 'unit': 'pcs',
+                              'unit_price': netto, 'total': netto}]
+
+                today = datetime.today()
+                date_str = today.strftime('%Y-%m-%d')
+
+                meta_client_addr = meta.get('Client Address', '') if meta else ''
+                meta_desc = meta.get('Description', '') if meta else ''
+                meta_location = meta.get('Location', '') if meta else ''
+                meta_event_date = meta.get('Event Date', '') if meta else ''
+                meta_service_date = meta.get('Service Date', '') if meta else date_str
+
+                doc_data = {
+                    'number': inv_number,
+                    'date': today,
+                    'client_name': _conv_client,
+                    'client_address': meta_client_addr,
+                    'client_id': '',
+                    'title': _conv_project,
+                    'description': meta_desc,
+                    'location': meta_location,
+                    'event_date': meta_event_date,
+                    'service_date': meta_service_date,
+                    'items': items,
+                    'subtotal': netto,
+                    'vat': vat,
+                    'total': brutto,
+                    'invoice_type': 'standard',
+                    'deposit_label': '',
+                    'project_total': 0,
+                }
+
+                # 4. Generate PDF
+                pdf_bytes = _generate_document_pdf('invoice', doc_data)
+                filename = f"notpaid_Rechnung_JosefSindelka_{inv_number}.pdf"
+
+                # 5. Upload to invoices folder in Drive
+                folder_id = _get_invoices_folder_id()
+                if folder_id:
+                    _drive_upload_bytes(folder_id, filename, pdf_bytes)
+
+                # 6. Add to Income sheet as unpaid
+                _conv_category = offer.get('Category', INCOME_CATEGORIES[0] if INCOME_CATEGORIES else 'Other')
+                inv_data_for_sheet = {
+                    'id': '',
+                    'invoice_number': int(inv_num_raw) if inv_num_raw.isdigit() else inv_num_raw,
+                    'date': today,
+                    'month': MONTHS[today.month - 1],
+                    'client': _conv_client,
+                    'project': _conv_project,
+                    'category': _conv_category,
+                    'netto': netto,
+                    'brutto': brutto,
+                }
+                add_invoice_to_excel(inv_data_for_sheet, status='unpaid')
+
+                # 7. Save invoice metadata
+                _save_document_meta(inv_number, 'Invoice', {
+                    'client': _conv_client,
+                    'client_address': meta_client_addr,
+                    'project': _conv_project,
+                    'category': offer.get('Category', ''),
+                    'description': meta_desc,
+                    'date': date_str,
+                    'location': meta_location,
+                    'event_date': meta_event_date,
+                    'service_date': meta_service_date,
+                    'invoice_type': 'standard',
+                    'deposit_label': '',
+                    'project_total': 0,
+                    'validity': '',
+                    'netto': netto,
+                    'brutto': brutto,
+                    'items_json': items_json_str if items_json_str else _json_conv.dumps(items),
+                    'status': 'SENT',
+                })
+
+                # 8. Update offer status to ACCEPTED (since it's being converted)
+                _update_offer_status(offer_number, 'ACCEPTED')
+
+                _invalidate_data_caches()
+                _log_activity('OFFER_TO_INVOICE', f"{offer_number} -> {inv_number}")
+                st.success(f"Invoice **{inv_number}** created from offer {offer_number}.")
+                st.download_button("Download Invoice PDF", data=pdf_bytes,
+                                  file_name=filename, mime='application/pdf',
+                                  key='conv_dl')
+                st.rerun()
+            except Exception as e:
+                st.error(f"Conversion failed: {e}")
+
     # ── Sub-tabs ─────────────────────────────────────────────────
     sub0, sub1, sub2, sub3 = st.tabs([
         'DASHBOARD', 'NEW INVOICE', 'NEW OFFER', 'CLIENTS'
@@ -3047,86 +3203,98 @@ def tab_invoices_offers(data):
                 'EXPIRED': C_RED,
             }
 
-            # Build HTML table header
-            table_html = f"""<table class="data-table"><thead><tr>
-                <th>NUMBER</th><th>TYPE</th><th>CLIENT</th><th>PROJECT</th>
-                <th class="num">AMOUNT</th><th>DATE</th><th>STATUS</th>
-            </tr></thead><tbody>"""
+            # ── Column header row ──
+            _t_muted = t["muted"]
+            _t_text = t["text"]
+            _t_text2 = t["text_secondary"]
+            _t_border = t["border"]
+            hdr_cols = st.columns([1.2, 0.8, 1.5, 1.5, 1.2, 1, 0.8, 2])
+            hdr_labels = ['NUMBER', 'TYPE', 'CLIENT', 'PROJECT', 'AMOUNT', 'DATE', 'STATUS', 'ACTIONS']
+            for hc, hl in zip(hdr_cols, hdr_labels):
+                hc.markdown(f"<span style='font-size:0.65rem;font-weight:600;letter-spacing:0.06em;color:{_t_muted};font-family:{FONT}'>{hl}</span>",
+                           unsafe_allow_html=True)
 
-            for doc in filtered:
-                s_color = _status_colors.get(doc['status'], t['muted'])
-                status_badge = (f'<span style="color:{s_color};background:rgba({",".join(str(int(s_color.lstrip("#")[i:i+2],16)) for i in (0,2,4))},0.15);'
-                                f'padding:2px 10px;border-radius:10px;font-size:0.72rem;font-weight:600">'
-                                f'{doc["status"]}</span>')
-                table_html += f"""<tr>
-                    <td style="font-weight:600">{doc['number']}</td>
-                    <td>{doc['type']}</td>
-                    <td>{doc['client']}</td>
-                    <td>{doc['project']}</td>
-                    <td class="num">{_fmt_eur_de(doc['amount'])} &euro;</td>
-                    <td>{doc['date']}</td>
-                    <td>{status_badge}</td>
-                </tr>"""
+            st.markdown(f"<hr style='margin:0.2rem 0 0.4rem 0;border:none;border-top:1px solid {_t_border}'>",
+                       unsafe_allow_html=True)
 
-            table_html += "</tbody></table>"
-            st.markdown(table_html, unsafe_allow_html=True)
-            st.markdown("")
-
-            # ── Action rows (Streamlit buttons per document) ──
-            for doc in filtered:
+            # ── Document rows ──
+            for idx, doc in enumerate(filtered):
                 dn = doc['number']
-                ac1, ac2, ac3, ac4 = st.columns([1, 1, 1, 0.5])
+                s_color = _status_colors.get(doc['status'], t['muted'])
+                # Pre-compute RGB for badge background
+                _sc_hex = s_color.lstrip("#")
+                _sc_r = str(int(_sc_hex[0:2], 16))
+                _sc_g = str(int(_sc_hex[2:4], 16))
+                _sc_b = str(int(_sc_hex[4:6], 16))
+                _sc_rgba = f"{_sc_r},{_sc_g},{_sc_b}"
+                _doc_status = doc["status"]
+                status_badge = f'<span style="color:{s_color};background:rgba({_sc_rgba},0.15);padding:2px 10px;border-radius:10px;font-size:0.72rem;font-weight:600">{_doc_status}</span>'
 
-                # PDF download
-                with ac1:
-                    if st.button(f"PDF {dn}", key=f"pdf_{dn}"):
-                        pdf_bytes = None
-                        try:
-                            if doc['type'] == 'Offer':
-                                fid = _get_offers_folder_id()
-                            else:
-                                fid = _get_invoices_folder_id()
-                            if fid:
-                                files = _drive_list_files(fid)
-                                search_key = dn.replace('RE', '').replace('AG', '')
-                                for f in files:
-                                    if search_key in f['name'] and f['name'].endswith('.pdf'):
-                                        pdf_bytes = _drive_download_bytes(f['id'])
-                                        st.download_button(
-                                            f"Download {dn}",
-                                            data=pdf_bytes,
-                                            file_name=f['name'],
-                                            mime='application/pdf',
-                                            key=f"dl_{dn}",
-                                        )
-                                        break
-                                if pdf_bytes is None:
-                                    st.caption("PDF not found on Drive.")
-                        except Exception as e:
-                            st.caption(f"Error: {e}")
+                rc = st.columns([1.2, 0.8, 1.5, 1.5, 1.2, 1, 0.8, 2])
+                rc[0].markdown(f"<span style='font-weight:600;font-size:0.78rem;color:{_t_text}'>{dn}</span>", unsafe_allow_html=True)
+                rc[1].markdown(f"<span style='font-size:0.78rem;color:{_t_text2}'>{doc['type']}</span>", unsafe_allow_html=True)
+                rc[2].markdown(f"<span style='font-size:0.78rem;color:{_t_text}'>{doc['client']}</span>", unsafe_allow_html=True)
+                rc[3].markdown(f"<span style='font-size:0.78rem;color:{_t_text2}'>{doc['project']}</span>", unsafe_allow_html=True)
+                _amt_str = _fmt_eur_de(doc['amount'])
+                rc[4].markdown(f"<span style='font-size:0.78rem;font-weight:500;color:{_t_text};font-variant-numeric:tabular-nums'>{_amt_str} &euro;</span>", unsafe_allow_html=True)
+                rc[5].markdown(f"<span style='font-size:0.78rem;color:{_t_text2}'>{doc['date']}</span>", unsafe_allow_html=True)
+                rc[6].markdown(status_badge, unsafe_allow_html=True)
 
-                # Edit
-                with ac2:
-                    if st.button(f"Edit {dn}", key=f"edit_{dn}"):
-                        meta = _get_document_meta(dn)
-                        if meta:
-                            if doc['type'] == 'Offer':
-                                st.session_state['edit_offer'] = meta
+                # Action buttons in last column
+                with rc[7]:
+                    bc1, bc2, bc3, bc4 = st.columns(4)
+                    with bc1:
+                        if st.button("📄", key=f"pdf_{dn}", help="Download PDF"):
+                            pdf_bytes = None
+                            try:
+                                if doc['type'] == 'Offer':
+                                    fid = _get_offers_folder_id()
+                                else:
+                                    fid = _get_invoices_folder_id()
+                                if fid:
+                                    files = _drive_list_files(fid)
+                                    search_key = dn.replace('RE', '').replace('AG', '')
+                                    for f in files:
+                                        if search_key in f['name'] and f['name'].endswith('.pdf'):
+                                            pdf_bytes = _drive_download_bytes(f['id'])
+                                            st.download_button(
+                                                "⬇",
+                                                data=pdf_bytes,
+                                                file_name=f['name'],
+                                                mime='application/pdf',
+                                                key=f"dl_{dn}",
+                                            )
+                                            break
+                                    if pdf_bytes is None:
+                                        st.caption("Not found")
+                            except Exception:
+                                st.caption("Err")
+                    with bc2:
+                        if st.button("✏️", key=f"edit_{dn}", help="Edit"):
+                            meta = _get_document_meta(dn)
+                            if meta:
+                                if doc['type'] == 'Offer':
+                                    st.session_state['edit_offer'] = meta
+                                else:
+                                    st.session_state['edit_invoice'] = meta
+                                st.toast(f"Edit form pre-filled for {dn}")
                             else:
-                                st.session_state['edit_invoice'] = meta
-                            st.info(f"Pre-filled edit form for **{dn}** — switch to the {'NEW OFFER' if doc['type'] == 'Offer' else 'NEW INVOICE'} tab.")
+                                st.toast("No editable metadata found.")
+                    with bc3:
+                        if doc['type'] == 'Offer' and doc['status'] != 'DRAFT':
+                            btn_label = "🔄"
+                            btn_help = "Convert to Invoice"
                         else:
-                            st.caption("No editable metadata found for this document.")
-
-                # Status change
-                with ac3:
-                    if st.button(f"Status {dn}", key=f"status_{dn}"):
-                        _dlg_change_status(dn, doc['type'], doc['status'])
-
-                # Delete
-                with ac4:
-                    if st.button(f"✕", key=f"del_{dn}"):
-                        _dlg_delete_doc(dn, doc['type'], doc['source'])
+                            btn_label = "📊"
+                            btn_help = "Change Status"
+                        if st.button(btn_label, key=f"status_{dn}", help=btn_help):
+                            if doc['type'] == 'Offer' and doc['status'] != 'DRAFT':
+                                _dlg_convert_offer_to_invoice(dn)
+                            else:
+                                _dlg_change_status(dn, doc['type'], doc['status'])
+                    with bc4:
+                        if st.button("🗑", key=f"del_{dn}", help="Delete"):
+                            _dlg_delete_doc(dn, doc['type'], doc['source'])
 
     # ────────────────────────────────────────────────────────────
     # SUB-TAB 1: NEW INVOICE

@@ -38,10 +38,10 @@ MONTHS = [
 # ─── Theme System ────────────────────────────────────────────────────────────
 THEMES = {
     'light': {
-        'bg': '#FFFFFF',
+        'bg': '#FAFAFA',
         'surface': '#FFFFFF',
-        'surface2': '#FAFAFA',
-        'surface3': '#F5F5F5',
+        'surface2': '#F5F5F5',
+        'surface3': '#F0F0F0',
         'border': '#E5E5E5',
         'border_hover': '#D4D4D4',
         'text': '#111111',
@@ -56,8 +56,9 @@ THEMES = {
         'sidebar_bg': '#111111',
         'sidebar_text': '#FFFFFF',
         'sidebar_text_dim': '#A3A3A3',
-        'sidebar_border': '#2A2A2A',
-        'sidebar_hover': '#1A1A1A',
+        'sidebar_section': '#525252',
+        'sidebar_border': '#404040',
+        'sidebar_hover': '#262626',
     },
     'dark': {
         'bg': '#0A0A0A',
@@ -78,6 +79,7 @@ THEMES = {
         'sidebar_bg': '#0A0A0A',
         'sidebar_text': '#F0F0F0',
         'sidebar_text_dim': '#737373',
+        'sidebar_section': '#404040',
         'sidebar_border': '#1A1A1A',
         'sidebar_hover': '#141414',
     },
@@ -436,16 +438,16 @@ def _inject_css():
     }}
 
     .stMainBlockContainer {{
-        max-width: 1400px;
-        padding: 1.5rem 2.5rem 3rem 2.5rem;
+        max-width: 1100px;
+        padding: 40px 48px;
     }}
 
     /* ── Date Header ── */
     .js-date {{
         font-family: {FONT};
-        font-size: 0.7rem;
+        font-size: 13px;
         color: {t['text_secondary']};
-        letter-spacing: 0.08em;
+        letter-spacing: 0.3px;
         font-weight: 400;
     }}
 
@@ -462,20 +464,20 @@ def _inject_css():
         background: transparent;
         border: none;
         border-radius: 3px;
-        padding: 0.45rem 1.3rem;
+        padding: 6px 14px;
         color: {t['text_secondary']};
         font-family: {FONT};
-        font-size: 0.7rem;
+        font-size: 12px;
         font-weight: 500;
-        letter-spacing: 0.06em;
+        letter-spacing: 0.3px;
         text-transform: uppercase;
-        transition: all 0.25s ease;
+        transition: all 0.15s ease;
         white-space: nowrap;
         height: auto;
     }}
     .stTabs [data-baseweb="tab"]:hover {{
         color: {t['text']};
-        background: {t['surface2']};
+        background: transparent;
     }}
     .stTabs [aria-selected="true"] {{
         background: {t['text']} !important;
@@ -496,37 +498,38 @@ def _inject_css():
         background: {t['surface']};
         border: 1px solid {t['border']};
         border-radius: 3px;
-        padding: 1.25rem 1.5rem;
+        padding: 20px;
         box-shadow: none;
         transition: border-color 0.2s ease;
-        margin-bottom: 0.5rem;
+        margin-bottom: 16px;
     }}
     .card:hover {{
         box-shadow: none;
         border-color: {t['border_hover']};
     }}
     .card-label {{
-        font-size: 0.55rem;
+        font-size: 11px;
         text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: {t['text_secondary']};
-        margin-bottom: 0.75rem;
+        letter-spacing: 0.8px;
+        color: {t['muted']};
+        margin-bottom: 4px;
         font-family: {FONT};
-        font-weight: 500;
+        font-weight: 600;
         line-height: 1.4;
     }}
     .card-value {{
-        font-size: clamp(0.95rem, 2.5vw, 1.75rem);
-        font-weight: 600;
+        font-size: 24px;
+        font-weight: 700;
         font-family: {FONT};
-        letter-spacing: -0.03em;
+        letter-spacing: -0.3px;
         color: {t['text']};
         white-space: nowrap;
+        font-variant-numeric: tabular-nums;
     }}
     .card-sub {{
-        font-size: 0.7rem;
+        font-size: 13px;
         color: {t['muted']};
-        margin-top: 0.5rem;
+        margin-top: 4px;
         font-family: {FONT};
         font-weight: 400;
     }}
@@ -540,41 +543,42 @@ def _inject_css():
         background: {t['surface']};
         border: 1px solid {t['border']};
         border-radius: 3px;
-        padding: 1.75rem;
-        margin-bottom: 1.5rem;
+        padding: 28px;
+        margin-bottom: 20px;
         box-shadow: none;
     }}
     .chart-title {{
-        font-size: 0.6rem;
+        font-size: 11px;
         text-transform: uppercase;
-        letter-spacing: 0.12em;
-        color: {t['text_secondary']};
-        margin-bottom: 1.25rem;
+        letter-spacing: 0.8px;
+        color: {t['muted']};
+        margin-bottom: 16px;
         font-family: {FONT};
-        font-weight: 500;
+        font-weight: 600;
     }}
 
     /* ── Data Tables ── */
     .data-table {{
         width: 100%;
         border-collapse: collapse;
-        font-size: 0.82rem;
+        font-size: 13px;
         font-family: {FONT};
     }}
     .data-table th {{
         text-align: left;
-        padding: 0.85rem 1rem;
-        font-size: 0.55rem;
+        padding: 10px 12px;
+        font-size: 11px;
         text-transform: uppercase;
-        letter-spacing: 0.1em;
-        color: {t['text_secondary']};
-        border-bottom: 1px solid {t['border']};
-        font-weight: 500;
+        letter-spacing: 0.8px;
+        color: {t['muted']};
+        border-bottom: 2px solid {t['border']};
+        font-weight: 600;
     }}
     .data-table td {{
-        padding: 0.85rem 1rem;
+        padding: 12px;
         border-bottom: 1px solid {t['row_border']};
         color: {t['text']};
+        font-size: 13px;
     }}
     .data-table tr:hover td {{
         background: {t['row_hover']};
@@ -582,25 +586,25 @@ def _inject_css():
     .data-table .num {{
         font-family: {FONT};
         text-align: right;
-        font-size: 0.8rem;
-        font-weight: 500;
+        font-size: 13px;
+        font-weight: 600;
         letter-spacing: -0.02em;
         font-variant-numeric: tabular-nums;
     }}
     .data-table .total-row td {{
         background: {t['surface2']};
         font-weight: 600;
-        border-top: 1px solid {t['border']};
+        border-top: 2px solid {t['border']};
     }}
 
     /* ── Badges ── */
     .badge {{
         display: inline-block;
-        padding: 3px 8px;
-        border-radius: 3px;
+        padding: 3px 10px;
+        border-radius: 2px;
         font-size: 11px;
         font-weight: 600;
-        letter-spacing: 0.04em;
+        letter-spacing: 0.5px;
         text-transform: uppercase;
     }}
     .badge-paid {{ color: {badge_paid_color}; background: {badge_paid_bg}; }}
@@ -614,21 +618,21 @@ def _inject_css():
     }}
     [data-testid="stRadio"] > div[role="radiogroup"] > label {{
         background: {t['surface']} !important;
-        border: 1px solid {t['border']} !important;
+        border: 1px solid {t['border_hover']} !important;
         border-radius: 3px !important;
-        padding: 0.35rem 1rem !important;
-        font-size: 0.78rem !important;
+        padding: 6px 14px !important;
+        font-size: 12px !important;
         font-weight: 500;
         font-family: {FONT};
         color: {t['text_secondary']} !important;
-        transition: all 0.2s ease;
+        transition: all 0.15s ease;
         cursor: pointer;
     }}
     [data-testid="stRadio"] > div[role="radiogroup"] > label > div:last-child {{
         color: {t['text_secondary']} !important;
     }}
     [data-testid="stRadio"] > div[role="radiogroup"] > label:hover {{
-        border-color: {t['border_hover']} !important;
+        border-color: {t['text']} !important;
         color: {t['text']} !important;
     }}
     [data-testid="stRadio"] > div[role="radiogroup"] > label:hover > div:last-child {{
@@ -652,8 +656,8 @@ def _inject_css():
     /* ── Dashboard row action buttons ── */
     [data-testid="stHorizontalBlock"] .stButton > button {{
         min-height: 0;
-        padding: 0.15rem 0.5rem;
-        font-size: 0.75rem;
+        padding: 6px 12px;
+        font-size: 12px;
     }}
 
     /* ── Container borders (form cards) ── */
@@ -682,11 +686,11 @@ def _inject_css():
     .goal-milestones {{
         display: flex;
         justify-content: space-between;
-        margin-top: 0.6rem;
-        font-size: 0.58rem;
+        margin-top: 8px;
+        font-size: 11px;
         color: {t['muted']};
         font-family: {FONT};
-        letter-spacing: 0.03em;
+        letter-spacing: 0.3px;
         font-weight: 400;
     }}
 
@@ -705,67 +709,68 @@ def _inject_css():
         background: {t['surface']};
         border: 1px solid {t['border']};
         border-radius: 3px;
-        padding: 0.75rem 0.5rem;
+        padding: 16px 12px;
         text-align: center;
         box-shadow: none;
-        transition: border-color 0.25s ease;
+        transition: border-color 0.15s ease;
     }}
     .month-card:hover {{
         border-color: {t['border_hover']};
     }}
     .month-card .m-label {{
-        font-size: 0.55rem;
+        font-size: 11px;
         text-transform: uppercase;
-        letter-spacing: 0.1em;
-        color: {t['text_secondary']};
-        margin-bottom: 0.4rem;
+        letter-spacing: 0.8px;
+        color: {t['muted']};
+        margin-bottom: 4px;
         font-family: {FONT};
-        font-weight: 500;
+        font-weight: 600;
     }}
     .month-card .m-value {{
         font-family: {FONT};
-        font-size: 0.85rem;
+        font-size: 14px;
         font-weight: 600;
         letter-spacing: -0.02em;
         white-space: nowrap;
+        font-variant-numeric: tabular-nums;
     }}
 
     /* ── Summary Row ── */
     .summary-row {{
         display: flex;
         justify-content: space-between;
-        padding: 0.85rem 0;
+        padding: 12px 0;
         border-bottom: 1px solid {t['row_border']};
-        font-size: 0.82rem;
+        font-size: 13px;
         font-family: {FONT};
     }}
     .summary-row:last-child {{ border-bottom: none; }}
-    .summary-row .s-label {{ color: {t['text_secondary']}; font-weight: 400; }}
-    .summary-row .s-value {{ font-weight: 600; color: {t['text']}; }}
+    .summary-row .s-label {{ color: {t['muted']}; font-weight: 400; }}
+    .summary-row .s-value {{ font-weight: 600; color: {t['text']}; font-variant-numeric: tabular-nums; }}
 
     /* ── Footer ── */
     .js-footer {{
         text-align: center;
-        font-size: 0.55rem;
+        font-size: 11px;
         color: {t['muted']};
-        letter-spacing: 0.12em;
+        letter-spacing: 0.8px;
         text-transform: uppercase;
-        padding: 3rem 0 1.5rem 0;
+        padding: 40px 0 24px 0;
         border-top: 1px solid {t['border']};
-        margin-top: 3rem;
+        margin-top: 40px;
         font-family: {FONT};
         font-weight: 400;
     }}
 
     /* ── Section Headers ── */
     .section-hdr {{
-        font-size: 0.6rem;
+        font-size: 11px;
         text-transform: uppercase;
-        letter-spacing: 0.12em;
-        color: {t['text_secondary']};
-        margin: 2rem 0 1.25rem 0;
+        letter-spacing: 0.8px;
+        color: {t['muted']};
+        margin: 32px 0 16px 0;
         font-family: {FONT};
-        font-weight: 500;
+        font-weight: 600;
     }}
 
     /* ── Widget Labels & Text Visibility ── */
@@ -780,10 +785,12 @@ def _inject_css():
     .stMultiSelect label,
     .stSlider label,
     .stColorPicker label {{
-        color: {t['text']} !important;
+        color: {t['text_secondary']} !important;
         font-family: {FONT};
-        font-weight: 500;
-        font-size: 0.82rem;
+        font-weight: 600;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
     }}
     .stSelectbox label p,
     .stTextInput label p,
@@ -791,7 +798,7 @@ def _inject_css():
     .stDateInput label p,
     .stTextArea label p,
     .stFileUploader label p {{
-        color: {t['text']} !important;
+        color: {t['text_secondary']} !important;
     }}
 
     /* Streamlit markdown text */
@@ -842,23 +849,23 @@ def _inject_css():
     /* ── Buttons ── */
     .stButton > button {{
         border-radius: 3px;
-        border: 1px solid {t['border']};
+        border: 1px solid {t['border_hover']};
         background: {t['surface']};
         color: {t['text']};
         font-family: {FONT};
         font-weight: 600;
         font-size: 13px;
-        letter-spacing: 0;
+        letter-spacing: 0.3px;
         text-transform: none;
         padding: 10px 20px;
-        transition: all 0.25s ease;
+        transition: all 0.15s ease;
         white-space: nowrap;
         box-shadow: none;
     }}
     .stButton > button:hover {{
-        background: {t['surface2']};
+        background: {t['surface']};
         color: {t['text']};
-        border-color: {t['border_hover']};
+        border-color: {t['text']};
     }}
     .stButton > button[kind="primary"] {{
         background: {t['text']};
@@ -878,9 +885,9 @@ def _inject_css():
     .tx-row {{
         display: flex;
         align-items: center;
-        padding: 0.7rem 1rem;
+        padding: 12px;
         border-bottom: 1px solid {t['row_border']};
-        font-size: 0.82rem;
+        font-size: 13px;
         color: {t['text']};
         font-family: {FONT};
     }}
@@ -890,18 +897,18 @@ def _inject_css():
     .tx-header {{
         display: flex;
         align-items: center;
-        padding: 0.85rem 1rem;
-        border-bottom: 1px solid {t['border']};
-        font-size: 0.55rem;
+        padding: 10px 12px;
+        border-bottom: 2px solid {t['border']};
+        font-size: 11px;
         text-transform: uppercase;
-        letter-spacing: 0.1em;
-        color: {t['text_secondary']};
-        font-weight: 500;
+        letter-spacing: 0.8px;
+        color: {t['muted']};
+        font-weight: 600;
         font-family: {FONT};
     }}
     .tx-actions .stButton > button {{
-        padding: 0.25rem 0.6rem;
-        font-size: 0.62rem;
+        padding: 6px 12px;
+        font-size: 12px;
         min-height: 0;
         line-height: 1;
         border-radius: 3px;
@@ -919,8 +926,8 @@ def _inject_css():
     /* ── Theme toggle button ── */
     .theme-toggle .stButton > button {{
         border-radius: 3px;
-        padding: 0.3rem 0.6rem;
-        font-size: 1.1rem;
+        padding: 6px 12px;
+        font-size: 13px;
         min-height: 0;
         line-height: 1;
         background: {t['surface2']};
@@ -944,11 +951,12 @@ def _inject_css():
     .stTextInput > div > div > input,
     .stNumberInput > div > div > input,
     .stDateInput > div > div > input {{
-        background: {t['surface2']};
-        border-color: {t['border']};
+        background: {t['surface']};
+        border-color: {t['border_hover']};
         border-radius: 3px;
         color: {t['text']};
         font-family: {FONT};
+        font-size: 14px;
     }}
     .stTextInput > div > div > input:focus,
     .stNumberInput > div > div > input:focus {{
@@ -958,11 +966,12 @@ def _inject_css():
 
     /* ── Text area ── */
     .stTextArea textarea {{
-        background: {t['surface2']};
-        border-color: {t['border']};
+        background: {t['surface']};
+        border-color: {t['border_hover']};
         border-radius: 3px;
         color: {t['text']};
         font-family: {FONT};
+        font-size: 14px;
     }}
 
     /* ── Expander ── */
@@ -986,15 +995,17 @@ def _inject_css():
     }}
     [data-testid="stSidebar"] [data-testid="stSidebarContent"] {{
         background: {t['sidebar_bg']} !important;
+        padding-top: 32px !important;
     }}
     section[data-testid="stSidebar"] .stButton > button {{
         background: transparent !important;
         border: none !important;
         color: {t['sidebar_text_dim']} !important;
         text-align: left !important;
+        justify-content: flex-start !important;
         font-size: 13px !important;
         font-weight: 500 !important;
-        padding: 8px 24px !important;
+        padding: 10px 24px !important;
         border-radius: 0 !important;
         width: 100% !important;
         letter-spacing: 0.3px !important;
@@ -1013,7 +1024,11 @@ def _inject_css():
     section[data-testid="stSidebar"] .nav-active .stButton > button {{
         background: {t['sidebar_hover']} !important;
         color: {t['sidebar_text']} !important;
-        font-weight: 600 !important;
+        font-weight: 500 !important;
+    }}
+    /* Nav item (inactive) - ensure left-alignment */
+    section[data-testid="stSidebar"] .nav-item .stButton > button {{
+        justify-content: flex-start !important;
     }}
     /* Sidebar action buttons (UPDATE/UPLOAD) */
     section[data-testid="stSidebar"] .sidebar-actions .stButton > button {{
@@ -4196,9 +4211,10 @@ def main():
     with st.sidebar:
         # Logo
         st.markdown(f'''
-            <div style="padding:20px 24px 24px;font-size:15px;font-weight:700;
+            <div style="padding:0 24px 32px;font-size:15px;font-weight:700;
                         text-transform:uppercase;letter-spacing:0.5px;color:{t['sidebar_text']};
-                        font-family:{FONT}">
+                        font-family:{FONT};border-bottom:1px solid {t['sidebar_border']};
+                        margin-bottom:16px">
                 JS STUDIO
             </div>
         ''', unsafe_allow_html=True)
@@ -4212,13 +4228,11 @@ def main():
             _do_upload = st.button("UPLOAD", key="sidebar_upload", use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # Divider
-        st.markdown(f'<div style="border-bottom:1px solid {t["sidebar_border"]};margin:12px 0"></div>', unsafe_allow_html=True)
-
         # Section label
         st.markdown(f'''
-            <div style="padding:8px 24px 6px;font-size:10px;text-transform:uppercase;
-                        letter-spacing:1.5px;color:{t['sidebar_text_dim']};font-family:{FONT}">
+            <div style="padding:20px 24px 6px;font-size:10px;text-transform:uppercase;
+                        letter-spacing:1.5px;color:{t['sidebar_section']};font-family:{FONT};
+                        font-weight:500">
                 OVERVIEW
             </div>
         ''', unsafe_allow_html=True)
@@ -4247,7 +4261,7 @@ def main():
                 st.markdown('</div>', unsafe_allow_html=True)
 
         # Bottom section: theme toggle + date
-        st.markdown(f'<div style="border-bottom:1px solid {t["sidebar_border"]};margin:16px 0"></div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="border-top:1px solid {t["sidebar_border"]};margin:20px 0 0 0;padding-top:12px"></div>', unsafe_allow_html=True)
 
         theme_label = "Light Mode" if st.session_state.get('theme', 'light') == 'dark' else "Dark Mode"
         if st.button(theme_label, key='sidebar_theme_toggle', use_container_width=True):

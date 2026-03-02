@@ -35,14 +35,49 @@ MONTHS = [
     'July', 'August', 'September', 'October', 'November', 'December'
 ]
 
-# ─── Design Tokens (matching Finance_Dashboard_2026.html) ────────────────────
-C_BG = '#040c16'
-C_SURFACE = '#0a1628'
-C_SURFACE2 = '#0e1e34'
-C_SURFACE3 = '#142840'
-C_BORDER = '#1a3050'
-C_TEXT = '#f0f0f0'
-C_MUTED = '#888'
+# ─── Theme System ────────────────────────────────────────────────────────────
+THEMES = {
+    'light': {
+        'bg': '#FAFAFA',
+        'surface': '#FFFFFF',
+        'surface2': '#F5F5F5',
+        'surface3': '#EBEBEB',
+        'border': 'rgba(0,0,0,0.08)',
+        'border_hover': 'rgba(0,0,0,0.15)',
+        'text': '#1A1A2E',
+        'text_secondary': '#6B7280',
+        'muted': '#9CA3AF',
+        'card_shadow': '0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)',
+        'card_shadow_hover': '0 4px 12px rgba(0,0,0,0.08)',
+        'chart_grid': 'rgba(0,0,0,0.06)',
+        'chart_zeroline': 'rgba(0,0,0,0.10)',
+        'row_hover': 'rgba(0,0,0,0.02)',
+        'row_border': 'rgba(0,0,0,0.04)',
+    },
+    'dark': {
+        'bg': '#0D1117',
+        'surface': '#161B22',
+        'surface2': '#1C2333',
+        'surface3': '#242D3D',
+        'border': 'rgba(255,255,255,0.06)',
+        'border_hover': 'rgba(255,255,255,0.12)',
+        'text': '#F0F0F0',
+        'text_secondary': '#8B949E',
+        'muted': '#6B7280',
+        'card_shadow': '0 1px 3px rgba(0,0,0,0.3)',
+        'card_shadow_hover': '0 4px 12px rgba(0,0,0,0.4)',
+        'chart_grid': 'rgba(255,255,255,0.04)',
+        'chart_zeroline': 'rgba(255,255,255,0.06)',
+        'row_hover': 'rgba(255,255,255,0.025)',
+        'row_border': 'rgba(255,255,255,0.03)',
+    },
+}
+
+def _t():
+    """Return current theme dict based on session state."""
+    return THEMES[st.session_state.get('theme', 'light')]
+
+# ─── Accent Colors (shared across themes) ───────────────────────────────────
 C_ORANGE = '#E85D26'
 C_ORANGE_LIGHT = '#FF7A45'
 C_GREEN = '#4ADE80'
@@ -75,7 +110,7 @@ BADGE_STYLES = {
     'Video Production': (C_GREEN, C_GREEN_DIM),
 }
 
-FONT = "-apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif"
+FONT = "'Inter', -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif"
 
 # Category → filename code mapping for uploaded expense PDFs
 CATEGORIES = [
@@ -353,87 +388,53 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# ─── Custom CSS ──────────────────────────────────────────────────────────────
-# Glass design tokens
-_GLASS_BG = 'rgba(255,255,255,0.025)'
-_GLASS_BG_HOVER = 'rgba(255,255,255,0.05)'
-_GLASS_BORDER = 'rgba(255,255,255,0.06)'
-_GLASS_BORDER_HOVER = 'rgba(255,255,255,0.12)'
-_GLASS_BLUR = '40px'
-
-st.markdown(f"""
+# ─── Custom CSS (theme-aware) ────────────────────────────────────────────────
+def _inject_css():
+    """Inject theme-aware CSS. Called once per render cycle."""
+    t = _t()
+    st.markdown(f"""
 <style>
-    /* ── Gradient Background ── */
-    @keyframes gradientShift {{
-        0%   {{ background-position: 0% 50%; }}
-        50%  {{ background-position: 100% 50%; }}
-        100% {{ background-position: 0% 50%; }}
-    }}
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
+    /* ── Base ── */
     .stApp {{
-        background: linear-gradient(160deg,
-            #0c0a14 0%,
-            #0a1428 12%,
-            #0b2240 26%,
-            #0e3558 40%,
-            #0a2e50 52%,
-            #082a4a 64%,
-            #0a3048 75%,
-            #071e38 88%,
-            #040c16 100%
-        );
-        background-size: 300% 300%;
-        animation: gradientShift 60s ease infinite;
+        background-color: {t['bg']};
         font-family: {FONT};
         min-height: 100vh;
     }}
     .stApp > header {{
-        background-color: transparent;
-    }}
-
-    /* ── Film Grain ── */
-    .stApp::before {{
-        content: '';
-        position: fixed;
-        top: 0; left: 0;
-        width: 100%; height: 100%;
-        pointer-events: none;
-        z-index: 1;
-        opacity: 0.02;
-        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
-        background-repeat: repeat;
-        background-size: 256px 256px;
+        background-color: {t['bg']};
     }}
 
     .stMainBlockContainer {{
         max-width: 1400px;
         padding: 1.5rem 2.5rem 3rem 2.5rem;
-        position: relative;
-        z-index: 2;
     }}
 
     /* ── Date Header ── */
     .js-date {{
         font-family: {FONT};
         font-size: 0.7rem;
-        color: rgba(255,255,255,0.4);
+        color: {t['text_secondary']};
         letter-spacing: 0.08em;
         font-weight: 400;
     }}
 
-    /* ── Tabs ── */
+    /* ── Tabs (pill style) ── */
     .stTabs [data-baseweb="tab-list"] {{
-        gap: 0.35rem;
-        background-color: transparent;
+        gap: 4px;
+        background: {t['surface']};
+        border: 1px solid {t['border']};
+        border-radius: 12px;
+        padding: 4px;
         border-bottom: none;
-        padding: 0.5rem 0;
     }}
     .stTabs [data-baseweb="tab"] {{
         background: transparent;
-        border: 1px solid transparent;
-        border-radius: 999px;
+        border: none;
+        border-radius: 8px;
         padding: 0.45rem 1.3rem;
-        color: rgba(255,255,255,0.35);
+        color: {t['text_secondary']};
         font-family: {FONT};
         font-size: 0.7rem;
         font-weight: 500;
@@ -444,8 +445,8 @@ st.markdown(f"""
         height: auto;
     }}
     .stTabs [data-baseweb="tab"]:hover {{
-        color: rgba(255,255,255,0.7);
-        background: {_GLASS_BG};
+        color: {t['text']};
+        background: {t['surface2']};
     }}
     .stTabs [aria-selected="true"] {{
         background: {C_ORANGE} !important;
@@ -462,23 +463,23 @@ st.markdown(f"""
 
     /* ── Cards ── */
     .card {{
-        background: {_GLASS_BG};
-        backdrop-filter: blur({_GLASS_BLUR});
-        -webkit-backdrop-filter: blur({_GLASS_BLUR});
-        border: 1px solid {_GLASS_BORDER};
+        background: {t['surface']};
+        border: 1px solid {t['border']};
         border-radius: 16px;
         padding: 1.25rem 1.5rem;
-        transition: border-color 0.3s ease;
+        box-shadow: {t['card_shadow']};
+        transition: box-shadow 0.2s ease, border-color 0.2s ease;
         margin-bottom: 0.5rem;
     }}
     .card:hover {{
-        border-color: {_GLASS_BORDER_HOVER};
+        box-shadow: {t['card_shadow_hover']};
+        border-color: {t['border_hover']};
     }}
     .card-label {{
         font-size: 0.55rem;
         text-transform: uppercase;
         letter-spacing: 0.08em;
-        color: rgba(255,255,255,0.35);
+        color: {t['text_secondary']};
         margin-bottom: 0.75rem;
         font-family: {FONT};
         font-weight: 500;
@@ -489,12 +490,12 @@ st.markdown(f"""
         font-weight: 600;
         font-family: {FONT};
         letter-spacing: -0.03em;
-        color: {C_TEXT};
+        color: {t['text']};
         white-space: nowrap;
     }}
     .card-sub {{
         font-size: 0.7rem;
-        color: rgba(255,255,255,0.3);
+        color: {t['muted']};
         margin-top: 0.5rem;
         font-family: {FONT};
         font-weight: 400;
@@ -506,19 +507,18 @@ st.markdown(f"""
 
     /* ── Chart Containers ── */
     .chart-card {{
-        background: {_GLASS_BG};
-        backdrop-filter: blur({_GLASS_BLUR});
-        -webkit-backdrop-filter: blur({_GLASS_BLUR});
-        border: 1px solid {_GLASS_BORDER};
+        background: {t['surface']};
+        border: 1px solid {t['border']};
         border-radius: 16px;
         padding: 1.75rem;
         margin-bottom: 1.5rem;
+        box-shadow: {t['card_shadow']};
     }}
     .chart-title {{
         font-size: 0.6rem;
         text-transform: uppercase;
         letter-spacing: 0.12em;
-        color: rgba(255,255,255,0.35);
+        color: {t['text_secondary']};
         margin-bottom: 1.25rem;
         font-family: {FONT};
         font-weight: 500;
@@ -537,17 +537,17 @@ st.markdown(f"""
         font-size: 0.55rem;
         text-transform: uppercase;
         letter-spacing: 0.1em;
-        color: rgba(255,255,255,0.3);
-        border-bottom: 1px solid {_GLASS_BORDER};
+        color: {t['text_secondary']};
+        border-bottom: 1px solid {t['border']};
         font-weight: 500;
     }}
     .data-table td {{
         padding: 0.85rem 1rem;
-        border-bottom: 1px solid rgba(255,255,255,0.03);
-        color: {C_TEXT};
+        border-bottom: 1px solid {t['row_border']};
+        color: {t['text']};
     }}
     .data-table tr:hover td {{
-        background: {_GLASS_BG};
+        background: {t['row_hover']};
     }}
     .data-table .num {{
         font-family: {FONT};
@@ -558,9 +558,9 @@ st.markdown(f"""
         font-variant-numeric: tabular-nums;
     }}
     .data-table .total-row td {{
-        background: {_GLASS_BG_HOVER};
+        background: {t['surface2']};
         font-weight: 600;
-        border-top: 1px solid {_GLASS_BORDER};
+        border-top: 1px solid {t['border']};
     }}
 
     /* ── Badges ── */
@@ -578,10 +578,8 @@ st.markdown(f"""
     .progress-bar-bg {{
         width: 100%;
         height: 10px;
-        background: {_GLASS_BG};
-        backdrop-filter: blur({_GLASS_BLUR});
-        -webkit-backdrop-filter: blur({_GLASS_BLUR});
-        border: 1px solid {_GLASS_BORDER};
+        background: {t['surface3']};
+        border: 1px solid {t['border']};
         border-radius: 999px;
         overflow: hidden;
         position: relative;
@@ -598,7 +596,7 @@ st.markdown(f"""
         justify-content: space-between;
         margin-top: 0.6rem;
         font-size: 0.58rem;
-        color: rgba(255,255,255,0.25);
+        color: {t['muted']};
         font-family: {FONT};
         letter-spacing: 0.03em;
         font-weight: 400;
@@ -616,23 +614,22 @@ st.markdown(f"""
         gap: 0.75rem;
     }}
     .month-card {{
-        background: {_GLASS_BG};
-        backdrop-filter: blur({_GLASS_BLUR});
-        -webkit-backdrop-filter: blur({_GLASS_BLUR});
-        border: 1px solid {_GLASS_BORDER};
+        background: {t['surface']};
+        border: 1px solid {t['border']};
         border-radius: 12px;
         padding: 0.75rem 0.5rem;
         text-align: center;
+        box-shadow: {t['card_shadow']};
         transition: border-color 0.25s ease;
     }}
     .month-card:hover {{
-        border-color: {_GLASS_BORDER_HOVER};
+        border-color: {t['border_hover']};
     }}
     .month-card .m-label {{
         font-size: 0.55rem;
         text-transform: uppercase;
         letter-spacing: 0.1em;
-        color: rgba(255,255,255,0.3);
+        color: {t['text_secondary']};
         margin-bottom: 0.4rem;
         font-family: {FONT};
         font-weight: 500;
@@ -650,23 +647,23 @@ st.markdown(f"""
         display: flex;
         justify-content: space-between;
         padding: 0.85rem 0;
-        border-bottom: 1px solid rgba(255,255,255,0.03);
+        border-bottom: 1px solid {t['row_border']};
         font-size: 0.82rem;
         font-family: {FONT};
     }}
     .summary-row:last-child {{ border-bottom: none; }}
-    .summary-row .s-label {{ color: rgba(255,255,255,0.35); font-weight: 400; }}
-    .summary-row .s-value {{ font-weight: 600; }}
+    .summary-row .s-label {{ color: {t['text_secondary']}; font-weight: 400; }}
+    .summary-row .s-value {{ font-weight: 600; color: {t['text']}; }}
 
     /* ── Footer ── */
     .js-footer {{
         text-align: center;
         font-size: 0.55rem;
-        color: rgba(255,255,255,0.2);
+        color: {t['muted']};
         letter-spacing: 0.12em;
         text-transform: uppercase;
         padding: 3rem 0 1.5rem 0;
-        border-top: 1px solid {_GLASS_BORDER};
+        border-top: 1px solid {t['border']};
         margin-top: 3rem;
         font-family: {FONT};
         font-weight: 400;
@@ -677,7 +674,7 @@ st.markdown(f"""
         font-size: 0.6rem;
         text-transform: uppercase;
         letter-spacing: 0.12em;
-        color: rgba(255,255,255,0.35);
+        color: {t['text_secondary']};
         margin: 2rem 0 1.25rem 0;
         font-family: {FONT};
         font-weight: 500;
@@ -685,8 +682,7 @@ st.markdown(f"""
 
     /* ── Override Streamlit defaults ── */
     #MainMenu {{visibility: hidden;}}
-    header[data-testid="stHeader"] {{background: transparent; pointer-events: none;}}
-    header[data-testid="stHeader"] * {{pointer-events: none;}}
+    header[data-testid="stHeader"] {{background: {t['bg']}; }}
     .stDeployButton, .stAppDeployButton {{display: none;}}
 
     div[data-testid="stVerticalBlock"] > div {{
@@ -700,12 +696,10 @@ st.markdown(f"""
 
     /* ── Buttons ── */
     .stButton > button {{
-        border-radius: 999px;
-        border: 1px solid {_GLASS_BORDER};
-        background: {_GLASS_BG};
-        backdrop-filter: blur({_GLASS_BLUR});
-        -webkit-backdrop-filter: blur({_GLASS_BLUR});
-        color: rgba(255,255,255,0.7);
+        border-radius: 10px;
+        border: 1px solid {t['border']};
+        background: {t['surface']};
+        color: {t['text_secondary']};
         font-family: {FONT};
         font-weight: 500;
         font-size: 0.7rem;
@@ -716,9 +710,9 @@ st.markdown(f"""
         white-space: nowrap;
     }}
     .stButton > button:hover {{
-        background: {_GLASS_BG_HOVER};
-        color: #fff;
-        border-color: {_GLASS_BORDER_HOVER};
+        background: {t['surface2']};
+        color: {t['text']};
+        border-color: {t['border_hover']};
     }}
     .stButton > button[kind="primary"] {{
         background: {C_ORANGE};
@@ -736,23 +730,23 @@ st.markdown(f"""
         display: flex;
         align-items: center;
         padding: 0.7rem 1rem;
-        border-bottom: 1px solid rgba(255,255,255,0.03);
+        border-bottom: 1px solid {t['row_border']};
         font-size: 0.82rem;
-        color: {C_TEXT};
+        color: {t['text']};
         font-family: {FONT};
     }}
     .tx-row:hover {{
-        background: {_GLASS_BG};
+        background: {t['row_hover']};
     }}
     .tx-header {{
         display: flex;
         align-items: center;
         padding: 0.85rem 1rem;
-        border-bottom: 1px solid {_GLASS_BORDER};
+        border-bottom: 1px solid {t['border']};
         font-size: 0.55rem;
         text-transform: uppercase;
         letter-spacing: 0.1em;
-        color: rgba(255,255,255,0.3);
+        color: {t['text_secondary']};
         font-weight: 500;
         font-family: {FONT};
     }}
@@ -773,12 +767,26 @@ st.markdown(f"""
         border-color: rgba(248,113,113,0.35);
     }}
 
+    /* ── Theme toggle button ── */
+    .theme-toggle .stButton > button {{
+        border-radius: 999px;
+        padding: 0.3rem 0.6rem;
+        font-size: 1.1rem;
+        min-height: 0;
+        line-height: 1;
+        background: {t['surface2']};
+        border: 1px solid {t['border']};
+        text-transform: none;
+        letter-spacing: 0;
+    }}
+    .theme-toggle .stButton > button:hover {{
+        background: {t['surface3']};
+    }}
+
     /* ── Dialog ── */
     div[data-testid="stModal"] > div {{
-        background: rgba(6,12,24,0.92);
-        backdrop-filter: blur(50px);
-        -webkit-backdrop-filter: blur(50px);
-        border: 1px solid {_GLASS_BORDER};
+        background: {t['surface']};
+        border: 1px solid {t['border']};
         border-radius: 16px;
     }}
 
@@ -787,19 +795,77 @@ st.markdown(f"""
     .stTextInput > div > div > input,
     .stNumberInput > div > div > input,
     .stDateInput > div > div > input {{
-        background: {_GLASS_BG};
-        border-color: {_GLASS_BORDER};
+        background: {t['surface2']};
+        border-color: {t['border']};
         border-radius: 10px;
-        color: {C_TEXT};
+        color: {t['text']};
         font-family: {FONT};
+    }}
+
+    /* ── Text area ── */
+    .stTextArea textarea {{
+        background: {t['surface2']};
+        border-color: {t['border']};
+        border-radius: 10px;
+        color: {t['text']};
+        font-family: {FONT};
+    }}
+
+    /* ── Expander ── */
+    .streamlit-expanderHeader {{
+        background: {t['surface']};
+        border-radius: 12px;
+        border: 1px solid {t['border']};
+        color: {t['text']};
     }}
 
     /* ── Plotly ── */
     .js-plotly-plot .plotly .main-svg {{
         background: transparent !important;
     }}
+
+    /* ── Mobile Responsive (iPhone 16/17 Pro = 393px) ── */
+    @media (max-width: 480px) {{
+        .stMainBlockContainer {{
+            padding: 0.5rem 0.75rem;
+        }}
+        .card {{
+            padding: 14px 16px;
+            border-radius: 12px;
+        }}
+        .card-value {{
+            font-size: 1.3rem;
+        }}
+        .stTabs [data-baseweb="tab-list"] {{
+            overflow-x: auto;
+            flex-wrap: nowrap;
+        }}
+        .stTabs [data-baseweb="tab"] {{
+            font-size: 0.65rem;
+            padding: 6px 12px;
+            white-space: nowrap;
+        }}
+        .chart-card {{
+            padding: 14px;
+            border-radius: 12px;
+        }}
+        .data-table {{
+            font-size: 0.75rem;
+        }}
+        .data-table th, .data-table td {{
+            padding: 0.6rem 0.5rem;
+        }}
+        .month-grid {{
+            grid-template-columns: repeat(2, 1fr);
+        }}
+        [data-testid="column"] {{
+            min-width: 100% !important;
+        }}
+    }}
 </style>
 """, unsafe_allow_html=True)
+
+_inject_css()
 
 
 # ─── Data Loading ────────────────────────────────────────────────────────────
@@ -976,27 +1042,28 @@ def _parse_2025_monthly(hist_df):
 
 # ─── UI Helpers ──────────────────────────────────────────────────────────────
 
-def dark_layout(fig, height=400, **kw):
-    """Apply consistent dark styling to a Plotly figure matching the design."""
+def chart_layout(fig, height=400, **kw):
+    """Apply theme-aware styling to a Plotly figure."""
+    t = _t()
     fig.update_layout(
         height=height,
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
-        font=dict(color=C_MUTED, size=12, family=FONT),
+        font=dict(color=t['muted'], size=12, family=FONT),
         margin=dict(l=40, r=20, t=40, b=40),
         legend=dict(
             bgcolor='rgba(0,0,0,0)', bordercolor='rgba(0,0,0,0)',
-            font=dict(color=C_MUTED, size=11, family=FONT),
+            font=dict(color=t['muted'], size=11, family=FONT),
         ),
-        xaxis=dict(gridcolor='rgba(255,255,255,0.04)', zerolinecolor='rgba(255,255,255,0.06)'),
-        yaxis=dict(gridcolor='rgba(255,255,255,0.04)', zerolinecolor='rgba(255,255,255,0.06)'),
+        xaxis=dict(gridcolor=t['chart_grid'], zerolinecolor=t['chart_zeroline']),
+        yaxis=dict(gridcolor=t['chart_grid'], zerolinecolor=t['chart_zeroline']),
         **kw,
     )
     return fig
 
 
 def metric_card(label, value, sub=None, color_class=''):
-    """Render a styled metric card matching the HTML design."""
+    """Render a styled metric card."""
     if isinstance(value, float):
         val_str = f"\u20ac{value:,.2f}"
     elif isinstance(value, int):
@@ -1014,6 +1081,32 @@ def metric_card(label, value, sub=None, color_class=''):
     """, unsafe_allow_html=True)
 
 
+def gauge_card(label, value, max_val, fmt_value=None, sub=None, color=C_ORANGE):
+    """Render a circular gauge KPI card (SVG-based)."""
+    t = _t()
+    pct = min(value / max_val, 1.0) if max_val > 0 else 0
+    circumference = 2 * 3.14159 * 54  # radius=54
+    offset = circumference * (1 - pct)
+    display = fmt_value or (f"\u20ac{value:,.0f}" if isinstance(value, (int, float)) else str(value))
+
+    st.markdown(f"""
+    <div class="card" style="text-align:center;">
+        <svg width="130" height="130" viewBox="0 0 120 120" style="margin:0 auto;display:block;">
+            <circle cx="60" cy="60" r="54" fill="none" stroke="{t['surface3']}" stroke-width="10"/>
+            <circle cx="60" cy="60" r="54" fill="none" stroke="{color}" stroke-width="10"
+                stroke-dasharray="{circumference:.1f}" stroke-dashoffset="{offset:.1f}"
+                stroke-linecap="round" transform="rotate(-90 60 60)"
+                style="transition: stroke-dashoffset 0.6s ease;"/>
+            <text x="60" y="56" text-anchor="middle" fill="{t['text']}"
+                font-size="18" font-weight="700" font-family="Inter">{display}</text>
+            <text x="60" y="74" text-anchor="middle" fill="{t['muted']}"
+                font-size="11" font-family="Inter">{int(pct*100)}%</text>
+        </svg>
+        <div class="card-label" style="margin-top:8px;">{label}</div>
+        {'<div class="card-sub">'+sub+'</div>' if sub else ''}
+    </div>""", unsafe_allow_html=True)
+
+
 def fmt_eur(v):
     """Format a number as Euro currency."""
     if v < 0:
@@ -1023,7 +1116,8 @@ def fmt_eur(v):
 
 def badge_html(text, category=None):
     """Generate an inline badge span for a category."""
-    colors = BADGE_STYLES.get(category or text, (C_MUTED, C_SURFACE3))
+    t = _t()
+    colors = BADGE_STYLES.get(category or text, (t['muted'], t['surface3']))
     return (f'<span class="badge" style="color:{colors[0]};background:{colors[1]}">'
             f'{text}</span>')
 
@@ -1159,10 +1253,10 @@ def tab_expenses(data):
         hole=0.55,
         marker=dict(colors=CHART_COLORS[:len(cat)], line=dict(width=0)),
         textinfo='label+percent',
-        textfont=dict(size=13, color=C_TEXT, family=FONT),
+        textfont=dict(size=13, color=_t()["text"], family=FONT),
         hovertemplate='<b>%{label}</b><br>\u20ac%{value:,.2f}<br>%{percent}<extra></extra>',
     )])
-    dark_layout(fig, height=650)
+    chart_layout(fig, height=650)
     fig.update_layout(showlegend=False)
     st.plotly_chart(fig, use_container_width=True)
 
@@ -1201,9 +1295,9 @@ def tab_expenses(data):
         marker_color=C_ORANGE,
         marker=dict(cornerradius=4),
         text=[fmt_eur(v) for v in vendor['Netto (€)']],
-        textposition='outside', textfont=dict(color=C_TEXT, size=10, family=FONT),
+        textposition='outside', textfont=dict(color=_t()["text"], size=10, family=FONT),
     ))
-    dark_layout(fig_vendor, height=max(300, len(vendor) * 32))
+    chart_layout(fig_vendor, height=max(300, len(vendor) * 32))
     st.plotly_chart(fig_vendor, use_container_width=True)
 
     # --- Transaction History Table with Edit/Delete ---
@@ -1269,9 +1363,9 @@ def tab_expenses(data):
         amount_str = fmt_eur(r['Netto (€)'])
 
         cols = st.columns([0.4, 1.2, 2.2, 1.8, 1.4, 0.8, 0.8])
-        cell_style = 'font-size:0.82rem;color:#f0f0f0;padding:0.3rem 0;font-family:-apple-system,Helvetica Neue,Helvetica,Arial,sans-serif;'
+        cell_style = f'font-size:0.82rem;color:{_t()["text"]};padding:0.3rem 0;font-family:{FONT};'
         with cols[0]:
-            st.markdown(f'<div style="{cell_style}color:rgba(255,255,255,0.35)">{display_num}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="{cell_style}color:{_t()["text_secondary"]}">{display_num}</div>', unsafe_allow_html=True)
         with cols[1]:
             st.markdown(f'<div style="{cell_style}">{date_str}</div>', unsafe_allow_html=True)
         with cols[2]:
@@ -1301,7 +1395,7 @@ def tab_expenses(data):
                 st.rerun()
         with pc2:
             st.markdown(
-                f'<div style="text-align:center;color:rgba(255,255,255,0.5);font-size:0.8rem;padding-top:0.4rem">'
+                f'<div style="text-align:center;color:{_t()["text_secondary"]};font-size:0.8rem;padding-top:0.4rem">'
                 f'Page {page + 1} of {total_pages} · {total_count} expenses</div>',
                 unsafe_allow_html=True)
         with pc3:
@@ -1364,9 +1458,9 @@ def tab_income(data):
                 marker=dict(colors=[C_ORANGE, C_BLUE, C_GREEN][:len(cat_totals)], line=dict(width=0)),
                 textinfo='label+percent+value',
                 texttemplate='%{label}<br>\u20ac%{value:,.0f}<br>(%{percent})',
-                textfont=dict(size=12, color=C_TEXT, family=FONT),
+                textfont=dict(size=12, color=_t()["text"], family=FONT),
             )])
-            dark_layout(fig, height=320)
+            chart_layout(fig, height=320)
             fig.update_layout(showlegend=False)
             st.plotly_chart(fig, use_container_width=True)
 
@@ -1382,9 +1476,9 @@ def tab_income(data):
                 marker_color=colors_list[:len(cr)] if len(cr) <= 4 else C_ORANGE,
                 marker=dict(cornerradius=6),
                 text=[fmt_eur(v) for v in cr['_n']],
-                textposition='outside', textfont=dict(color=C_TEXT, size=11, family=FONT),
+                textposition='outside', textfont=dict(color=_t()["text"], size=11, family=FONT),
             ))
-            dark_layout(fig2, height=max(250, len(cr) * 55))
+            chart_layout(fig2, height=max(250, len(cr) * 55))
             fig2.update_layout(showlegend=False)
             st.plotly_chart(fig2, use_container_width=True)
 
@@ -1404,7 +1498,7 @@ def tab_income(data):
             <span style="flex:0.6;text-align:center">ACTION</span>
         </div>""", unsafe_allow_html=True)
 
-        _cs = 'font-size:0.82rem;color:#f0f0f0;padding:0.3rem 0;font-family:-apple-system,Helvetica Neue,Helvetica,Arial,sans-serif;'
+        _cs = f'font-size:0.82rem;color:{_t()["text"]};padding:0.3rem 0;font-family:{FONT};'
         for idx, (_, r) in enumerate(paid.iterrows(), 1):
             date_str = ''
             if 'Date' in r.index and pd.notna(r['Date']):
@@ -1423,7 +1517,7 @@ def tab_income(data):
 
             cols = st.columns([0.3, 0.7, 0.7, 1.2, 1.0, 0.9, 0.6, 0.6, 0.6])
             with cols[0]:
-                st.markdown(f'<div style="{_cs}color:rgba(255,255,255,0.35)">{idx}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="{_cs}color:{_t()["text_secondary"]}">{idx}</div>', unsafe_allow_html=True)
             with cols[1]:
                 st.markdown(f'<div style="{_cs}">{inv_num}</div>', unsafe_allow_html=True)
             with cols[2]:
@@ -1458,7 +1552,7 @@ def tab_income(data):
             <span style="flex:1.2;text-align:center">ACTIONS</span>
         </div>""", unsafe_allow_html=True)
 
-        _cs2 = 'font-size:0.82rem;color:#f0f0f0;padding:0.3rem 0;font-family:-apple-system,Helvetica Neue,Helvetica,Arial,sans-serif;'
+        _cs2 = f'font-size:0.82rem;color:{_t()["text"]};padding:0.3rem 0;font-family:{FONT};'
         for _, r in unpaid.iterrows():
             date_str = ''
             if 'Date' in r.index and pd.notna(r['Date']):
@@ -1500,7 +1594,7 @@ def tab_income(data):
 
     elif total_unpaid == 0:
         st.markdown(f"""
-        <div class="card" style="border-color: rgba(74,222,128,0.2); background: linear-gradient(135deg, {C_GREEN_DIM} 0%, {C_SURFACE} 100%);">
+        <div class="card" style="border-left: 3px solid {C_GREEN};">
             <div class="card-value positive" style="font-size:1.2rem">All invoices are paid!</div>
         </div>
         """, unsafe_allow_html=True)
@@ -1530,25 +1624,16 @@ def tab_goal(data):
     # --- KPI Cards ---
     k1, k2, k3, k4 = st.columns(4)
     with k1:
-        st.markdown(f"""
-        <div class="card" style="border-color: rgba(232,93,38,0.2); background: linear-gradient(135deg, {C_SURFACE} 0%, rgba(232,93,38,0.04) 100%);">
-            <div class="card-label">Annual Goal</div>
-            <div class="card-value accent">\u20ac{goal:,.0f}</div>
-            <div class="card-sub">Sep 2025 \u2013 Dec 2026</div>
-        </div>
-        """, unsafe_allow_html=True)
+        gauge_card('Annual Goal', acquired, goal,
+                   fmt_value=f'\u20ac{acquired:,.0f}',
+                   sub=f'of \u20ac{goal:,.0f} goal', color=C_ORANGE)
     with k2:
         metric_card('Acquired', acquired, sub=f'{pct:.1f}% achieved', color_class='positive')
     with k3:
         metric_card('Remaining', remaining, sub=f'{100-pct:.1f}% to go')
     with k4:
-        st.markdown(f"""
-        <div class="card">
-            <div class="card-label">Monthly Target</div>
-            <div class="card-value" style="color:{C_ORANGE_LIGHT}">{fmt_eur(monthly_target)}</div>
-            <div class="card-sub">Avg needed over remaining {months_left} months</div>
-        </div>
-        """, unsafe_allow_html=True)
+        metric_card('Monthly Target', monthly_target,
+                    sub=f'Avg over remaining {months_left} months', color_class='accent')
 
     # --- Progress Bar ---
     pct_clamped = min(pct, 100)
@@ -1648,12 +1733,12 @@ def tab_goal(data):
         ))
         fig.add_trace(go.Scatter(
             x=labels, y=goal_line, mode='lines', name='Goal Line',
-            line=dict(color=C_SURFACE3, width=2, dash='dash'),
+            line=dict(color=_t()["surface3"], width=2, dash='dash'),
         ))
         fig.update_layout(
             legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
         )
-        dark_layout(fig, height=350)
+        chart_layout(fig, height=350)
         fig.update_yaxes(range=[0, goal * 1.1])
         st.plotly_chart(fig, use_container_width=True)
 
@@ -1734,7 +1819,7 @@ def tab_goal(data):
             barmode='stack', bargap=0.25,
             legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
         )
-        dark_layout(fig_proj, height=320)
+        chart_layout(fig_proj, height=320)
         st.plotly_chart(fig_proj, use_container_width=True)
     else:
         st.info("No income data yet — projections will appear once you have at least one month of data.")
@@ -1787,7 +1872,7 @@ def tab_taxes(data):
         """, unsafe_allow_html=True)
     with tk4:
         st.markdown(f"""
-        <div class="card" style="border-color: rgba(232,93,38,0.2); background: linear-gradient(135deg, {C_SURFACE} 0%, rgba(232,93,38,0.04) 100%);">
+        <div class="card" style="border-left: 3px solid {C_ORANGE};">
             <div class="card-label">After-Tax Estimate</div>
             <div class="card-value {'positive' if after_tax >= 0 else 'negative'}">{fmt_eur(after_tax)}</div>
             <div class="card-sub">Total tax burden: {fmt_eur(total_tax_burden)}</div>
@@ -1892,7 +1977,7 @@ def tab_taxes(data):
             """, unsafe_allow_html=True)
         with pk4:
             st.markdown(f"""
-            <div class="card" style="border-color: rgba(232,93,38,0.2); background: linear-gradient(135deg, {C_SURFACE} 0%, rgba(232,93,38,0.04) 100%);">
+            <div class="card" style="border-left: 3px solid {C_ORANGE};">
                 <div class="card-label">Total Tax Burden (Projected)</div>
                 <div class="card-value negative">{fmt_eur(proj_total_tax)}</div>
                 <div class="card-sub">Income tax + VAT for full year</div>
@@ -1901,9 +1986,9 @@ def tab_taxes(data):
 
     # --- Tax rates info ---
     st.markdown(f"""
-    <div style="margin-top:1.5rem;padding:0.8rem 1rem;background:{C_SURFACE2};border-radius:8px;
-                border:1px solid {C_BORDER};font-size:0.78rem;color:{C_MUTED}">
-        <strong style="color:{C_TEXT}">Tax Rates Used:</strong>
+    <div style="margin-top:1.5rem;padding:0.8rem 1rem;background:{_t()["surface2"]};border-radius:8px;
+                border:1px solid {_t()["border"]};font-size:0.78rem;color:{_t()["muted"]}">
+        <strong style="color:{_t()["text"]}">Tax Rates Used:</strong>
         Income Tax: {TAX_RATE_INCOME:.0%} (combined Einkommensteuer + Soli) &middot;
         VAT: {VAT_RATE:.0%} (Umsatzsteuer) &middot;
         These are estimates only &mdash; consult your Steuerberater for exact figures.
@@ -2948,7 +3033,7 @@ def tab_2025(data):
     fig.update_layout(
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
     )
-    dark_layout(fig, height=380)
+    chart_layout(fig, height=380)
     st.plotly_chart(fig, use_container_width=True)
 
     # --- 2025 vs 2026 comparison ---
@@ -2973,7 +3058,7 @@ def tab_2025(data):
             marker=dict(cornerradius=4),
         ))
         fig2.update_layout(barmode='group', bargap=0.25, bargroupgap=0.1)
-        dark_layout(fig2, height=380)
+        chart_layout(fig2, height=380)
         st.plotly_chart(fig2, use_container_width=True)
 
 
@@ -4654,9 +4739,9 @@ def sync_invoices_dialog():
             st.rerun()
         return
 
-    _card = (f'background:{_GLASS_BG};backdrop-filter:blur({_GLASS_BLUR});'
-             f'-webkit-backdrop-filter:blur({_GLASS_BLUR});border:1px solid {_GLASS_BORDER};'
-             f'border-radius:12px;padding:1rem;margin-bottom:0.5rem')
+    _card = (f'background:{_t()["surface"]};border:1px solid {_t()["border"]};'
+             f'border-radius:12px;padding:1rem;margin-bottom:0.5rem;'
+             f'box-shadow:{_t()["card_shadow"]}')
 
     st.markdown(f"**Found {len(all_changes)} change(s)**")
     st.markdown("Review the changes below, then click **Apply Changes** to update the spreadsheet.")
@@ -4677,7 +4762,7 @@ def sync_invoices_dialog():
                 desc = f'Invoice {inv} ({amt} \u2014 {client}) will be moved from paid to unpaid invoices'
                 accent = C_RED
             st.markdown(f'<div style="{_card};border-left:3px solid {accent}">'
-                        f'<div style="color:{C_TEXT};font-size:0.85rem">{desc}</div>'
+                        f'<div style="color:{_t()["text"]};font-size:0.85rem">{desc}</div>'
                         f'</div>', unsafe_allow_html=True)
 
         elif c['change_type'] == 'NEW':
@@ -4687,14 +4772,14 @@ def sync_invoices_dialog():
             else:
                 desc = f'Invoice {inv} (new PDF found) will be added to {status_word} invoices'
             st.markdown(f'<div style="{_card};border-left:3px solid {C_BLUE}">'
-                        f'<div style="color:{C_TEXT};font-size:0.85rem">{desc}</div>'
-                        f'<div style="font-size:0.75rem;color:{C_MUTED};margin-top:0.25rem">{c["filename"]}</div>'
+                        f'<div style="color:{_t()["text"]};font-size:0.85rem">{desc}</div>'
+                        f'<div style="font-size:0.75rem;color:{_t()["muted"]};margin-top:0.25rem">{c["filename"]}</div>'
                         f'</div>', unsafe_allow_html=True)
 
         elif c['change_type'] == 'MISSING':
             desc = f'Invoice {inv} ({amt} \u2014 {client}) is no longer in the folder and will be removed'
             st.markdown(f'<div style="{_card};border-left:3px solid {C_RED}">'
-                        f'<div style="color:{C_TEXT};font-size:0.85rem">{desc}</div>'
+                        f'<div style="color:{_t()["text"]};font-size:0.85rem">{desc}</div>'
                         f'</div>', unsafe_allow_html=True)
 
     # ── Expense changes ──
@@ -4709,16 +4794,16 @@ def sync_invoices_dialog():
             amt_str = f" ({amt})" if amt else ""
             desc = f"New expense: {cat} \u2014 {recip}{amt_str} will be added"
             st.markdown(f'<div style="{_card};border-left:3px solid {C_BLUE}">'
-                        f'<div style="color:{C_TEXT};font-size:0.85rem">{desc}</div>'
-                        f'<div style="font-size:0.75rem;color:{C_MUTED};margin-top:0.25rem">{c.get("folder", "")}/{c["filename"]}</div>'
+                        f'<div style="color:{_t()["text"]};font-size:0.85rem">{desc}</div>'
+                        f'<div style="font-size:0.75rem;color:{_t()["muted"]};margin-top:0.25rem">{c.get("folder", "")}/{c["filename"]}</div>'
                         f'</div>', unsafe_allow_html=True)
 
         elif c['change_type'] == 'MISSING_EXPENSE':
             amt_str = f" ({amt})" if amt else ""
             desc = f"Expense: {cat} \u2014 {recip}{amt_str} \u2014 PDF removed from Drive, will be deleted"
             st.markdown(f'<div style="{_card};border-left:3px solid {C_RED}">'
-                        f'<div style="color:{C_TEXT};font-size:0.85rem">{desc}</div>'
-                        f'<div style="font-size:0.75rem;color:{C_MUTED};margin-top:0.25rem">{c.get("month", "")} \u2014 ID {c.get("sheet_id", "")}</div>'
+                        f'<div style="color:{_t()["text"]};font-size:0.85rem">{desc}</div>'
+                        f'<div style="font-size:0.75rem;color:{_t()["muted"]};margin-top:0.25rem">{c.get("month", "")} \u2014 ID {c.get("sheet_id", "")}</div>'
                         f'</div>', unsafe_allow_html=True)
 
     # --- Action buttons ---
@@ -4818,11 +4903,16 @@ def sync_invoices_dialog():
 def main():
     data = load_data()
 
+    # ── Theme Toggle ──
+    if 'theme' not in st.session_state:
+        st.session_state['theme'] = 'light'
+
     # ── Header ──
     today = datetime.now()
     date_str = f"({today.strftime('%d.%m.%y')})"
+    t = _t()
 
-    h1, h2, h3 = st.columns([5, 1.5, 1.5])
+    h1, h2, h3, h4 = st.columns([5, 1.2, 1.2, 0.5])
     with h1:
         st.markdown(f"""
         <div style="text-align:left;padding-top:0.6rem">
@@ -4833,13 +4923,20 @@ def main():
         update_clicked = st.button("Update", key="update_btn", type="primary")
     with h3:
         upload_clicked = st.button("+ Upload", key="upload_btn", type="primary")
+    with h4:
+        st.markdown('<div class="theme-toggle">', unsafe_allow_html=True)
+        icon = '\u2600\ufe0f' if st.session_state['theme'] == 'dark' else '\U0001f319'
+        if st.button(icon, key='theme_toggle', help='Toggle light/dark mode'):
+            st.session_state['theme'] = 'dark' if st.session_state['theme'] == 'light' else 'light'
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
     if update_clicked:
         sync_invoices_dialog()
     if upload_clicked:
         upload_expense_dialog()
 
-    st.markdown('<div style="border-bottom:1px solid rgba(255,255,255,0.06);margin-bottom:0.75rem"></div>',
+    st.markdown(f'<div style="border-bottom:1px solid {t["border"]};margin-bottom:0.75rem"></div>',
                 unsafe_allow_html=True)
 
     # ── Auto-scan for invoice changes on refresh ──
@@ -4868,7 +4965,7 @@ def main():
         st.markdown(f"""
         <div style="background:rgba(232,101,26,0.12);border:1px solid rgba(232,101,26,0.3);
                     border-radius:8px;padding:0.6rem 1rem;margin-bottom:0.75rem;
-                    font-size:0.85rem;color:{C_TEXT}">
+                    font-size:0.85rem;color:{_t()["text"]}">
             <strong>{len(auto_changes)} change{'s' if len(auto_changes) > 1 else ''} detected:</strong>
             {summary}. Click <strong>Update</strong> to review and apply.
         </div>
@@ -4928,11 +5025,12 @@ def main():
     log_entries = _load_activity_log()
     if log_entries:
         with st.expander(f"Activity Log ({len(log_entries)} entries)", expanded=False):
-            log_html = '<div style="font-size:0.78rem;font-family:monospace;color:#ccc;max-height:300px;overflow-y:auto">'
+            _lt = _t()
+            log_html = f'<div style="font-size:0.78rem;font-family:monospace;color:{_lt["text"]};max-height:300px;overflow-y:auto">'
             for entry in log_entries[:50]:
                 log_html += (
-                    f'<div style="padding:0.25rem 0;border-bottom:1px solid rgba(255,255,255,0.05)">'
-                    f'<span style="color:rgba(255,255,255,0.35)">{entry["timestamp"]}</span> '
+                    f'<div style="padding:0.25rem 0;border-bottom:1px solid {_lt["row_border"]}">'
+                    f'<span style="color:{_lt["text_secondary"]}">{entry["timestamp"]}</span> '
                     f'<span style="color:{C_ORANGE}">{entry["action"]}</span> '
                     f'<span>{entry["details"]}</span></div>'
                 )
@@ -4957,8 +5055,8 @@ def _check_password():
     <div style="display:flex;align-items:center;justify-content:center;min-height:60vh">
         <div style="text-align:center;max-width:340px">
             <div style="font-size:2.5rem;margin-bottom:1rem">💼</div>
-            <h2 style="color:{C_TEXT};margin-bottom:0.5rem">Finance Dashboard</h2>
-            <p style="color:{C_MUTED};font-size:0.85rem;margin-bottom:1.5rem">
+            <h2 style="color:{_t()["text"]};margin-bottom:0.5rem">Finance Dashboard</h2>
+            <p style="color:{_t()["muted"]};font-size:0.85rem;margin-bottom:1.5rem">
                 Enter password to continue</p>
         </div>
     </div>

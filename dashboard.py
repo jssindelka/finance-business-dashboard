@@ -11,11 +11,12 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 import os
 import json
 import io
+import base64
 import tempfile
 import streamlit.components.v1 as components
 import gspread
@@ -23,6 +24,7 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
+from fpdf import FPDF
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 SHEET_ID = '1aLRvXRf9ni6i7u6WzcEk9psoTwa9XQNJQZ3jS-nXUj4'
@@ -1108,8 +1110,14 @@ def _invalidate_data_caches():
     Preserves long-lived caches like _drive_find_folder and get_exchange_rate."""
     load_data.clear()
     _auto_scan_changes.clear()
-    _load_offers.clear()
-    _load_document_meta.clear()
+    try:
+        _load_documents.clear()
+    except Exception:
+        pass
+    try:
+        _load_clients_cached.clear()
+    except Exception:
+        pass
 
 @st.cache_data(ttl=30)
 def load_data():
@@ -3975,12 +3983,223 @@ def edit_expense_dialog(expense):
                     st.error("Could not find the expense row in the spreadsheet.")
 
 
+def _check_documents_drive_integrity():
+    """Read-only integrity check: compare Documents sheet against actual Drive files.
+    Returns a list of discrepancy dicts: {type, message, folder, severity}."""
+    discrepancies = []
+
+    # Load documents from sheet
+    try:
+        docs = _load_documents()
+    except Exception as e:
+        return [{'type': 'error', 'message': f'Could not load Documents sheet: {e}',
+                 'folder': '', 'severity': 'error'}]
+
+    # Get year folder
+    year_folder = _get_year_folder()
+    if not year_folder:
+        return [{'type': 'error', 'message': 'Could not find year folder on Drive.',
+                 'folder': '', 'severity': 'error'}]
+
+    # List files in both Drive folders
+    drive_files_invoices = {}  # {filename: file_id}
+    drive_files_offers = {}
+
+    inv_folder_id = _drive_find_folder(year_folder, INVOICES_FOLDER)
+    off_folder_id = _drive_find_folder(year_folder, OFFERS_FOLDER)
+
+    if inv_folder_id:
+        for f in _drive_list_files(inv_folder_id):
+            drive_files_invoices[f['name']] = f['id']
+
+    if off_folder_id:
+        for f in _drive_list_files(off_folder_id):
+            drive_files_offers[f['name']] = f['id']
+
+    # Build lookup of DB records that have Drive references
+    db_files_invoices = {}  # {filename: doc_record}
+    db_files_offers = {}
+    db_by_file_id = {}  # {drive_file_id: doc_record}
+
+    for doc in docs:
+        drive_fn = doc.get('Drive_Filename', '').strip()
+        drive_id = doc.get('Drive_File_ID', '').strip()
+        doc_type = str(doc.get('Type', '')).lower()
+        doc_num = doc.get('Number', '')
+
+        if not drive_fn and not drive_id:
+            # Draft without a generated PDF — skip, not expected on Drive
+            continue
+
+        is_invoice = doc_type in ('rechnung', 'invoice')
+        is_offer = doc_type in ('angebot', 'offer')
+
+        if is_invoice:
+            db_files_invoices[drive_fn] = doc
+        elif is_offer:
+            db_files_offers[drive_fn] = doc
+
+        if drive_id:
+            db_by_file_id[drive_id] = doc
+
+    # ── Check 1: Files in DB but missing from Drive ──
+    for fn, doc in db_files_invoices.items():
+        drive_id = doc.get('Drive_File_ID', '').strip()
+        if fn and fn not in drive_files_invoices:
+            # Also check by file ID in case renamed
+            found_by_id = False
+            if drive_id:
+                for d_name, d_id in drive_files_invoices.items():
+                    if d_id == drive_id and d_name != fn:
+                        discrepancies.append({
+                            'type': 'renamed',
+                            'message': f'File renamed in {INVOICES_FOLDER}: expected "{fn}", found "{d_name}".',
+                            'folder': INVOICES_FOLDER,
+                            'severity': 'warning',
+                        })
+                        found_by_id = True
+                        break
+            if not found_by_id:
+                discrepancies.append({
+                    'type': 'missing_from_drive',
+                    'message': f'File missing from {INVOICES_FOLDER}: {fn}',
+                    'folder': INVOICES_FOLDER,
+                    'severity': 'warning',
+                })
+
+    for fn, doc in db_files_offers.items():
+        drive_id = doc.get('Drive_File_ID', '').strip()
+        if fn and fn not in drive_files_offers:
+            found_by_id = False
+            if drive_id:
+                for d_name, d_id in drive_files_offers.items():
+                    if d_id == drive_id and d_name != fn:
+                        discrepancies.append({
+                            'type': 'renamed',
+                            'message': f'File renamed in {OFFERS_FOLDER}: expected "{fn}", found "{d_name}".',
+                            'folder': OFFERS_FOLDER,
+                            'severity': 'warning',
+                        })
+                        found_by_id = True
+                        break
+            if not found_by_id:
+                discrepancies.append({
+                    'type': 'missing_from_drive',
+                    'message': f'File missing from {OFFERS_FOLDER}: {fn}',
+                    'folder': OFFERS_FOLDER,
+                    'severity': 'warning',
+                })
+
+    # ── Check 2: Files on Drive but not in DB (orphaned / added externally) ──
+    db_invoice_names = set(db_files_invoices.keys())
+    db_offer_names = set(db_files_offers.keys())
+    # Also gather all known Drive file IDs from DB
+    db_drive_ids = set(db_by_file_id.keys())
+
+    for d_name, d_id in drive_files_invoices.items():
+        if d_name not in db_invoice_names and d_id not in db_drive_ids:
+            discrepancies.append({
+                'type': 'not_in_db',
+                'message': f'File on Drive not in database ({INVOICES_FOLDER}): {d_name}',
+                'folder': INVOICES_FOLDER,
+                'severity': 'info',
+            })
+
+    for d_name, d_id in drive_files_offers.items():
+        if d_name not in db_offer_names and d_id not in db_drive_ids:
+            discrepancies.append({
+                'type': 'not_in_db',
+                'message': f'File on Drive not in database ({OFFERS_FOLDER}): {d_name}',
+                'folder': OFFERS_FOLDER,
+                'severity': 'info',
+            })
+
+    # ── Check 3: Status / prefix mismatch ──
+    # For invoices: if DB status is 'paid' the file should NOT have notpaid_ prefix
+    # If DB status is not 'paid', the file SHOULD have notpaid_ prefix
+    for fn, doc in db_files_invoices.items():
+        if fn not in drive_files_invoices:
+            continue  # Already reported as missing
+        status = str(doc.get('Status', '')).lower()
+        has_notpaid = fn.startswith('notpaid_')
+        if status == 'paid' and has_notpaid:
+            discrepancies.append({
+                'type': 'status_mismatch',
+                'message': (f'Status mismatch in {INVOICES_FOLDER}: '
+                            f'database says "{doc.get("Number", "")}" is paid, '
+                            f'but file still has notpaid_ prefix: {fn}'),
+                'folder': INVOICES_FOLDER,
+                'severity': 'warning',
+            })
+        elif status != 'paid' and status != 'draft' and not has_notpaid:
+            discrepancies.append({
+                'type': 'status_mismatch',
+                'message': (f'Status mismatch in {INVOICES_FOLDER}: '
+                            f'database says "{doc.get("Number", "")}" is {status}, '
+                            f'but file is missing notpaid_ prefix: {fn}'),
+                'folder': INVOICES_FOLDER,
+                'severity': 'warning',
+            })
+
+    return discrepancies
+
+
 @st.dialog("Update", width="large")
 def sync_invoices_dialog():
     """Scan invoices and cost folders for changes and sync with spreadsheet."""
     with st.spinner("Scanning Google Drive for changes..."):
         changes = scan_invoice_changes()
         expense_changes = scan_expense_changes()
+        doc_discrepancies = _check_documents_drive_integrity()
+
+    # ── Documents integrity check (read-only) ──
+    t = _t()
+    _card_base = (f'background:{t["surface"]};border:1px solid {t["border"]};'
+                  f'border-radius:3px;padding:1rem;margin-bottom:0.5rem;box-shadow:none')
+
+    if not doc_discrepancies:
+        st.markdown(
+            f'<div style="{_card_base};border-left:3px solid {C_GREEN}">'
+            f'<div style="color:{t["text"]};font-size:0.85rem;font-weight:600">'
+            f'Everything is OK \u2014 all files correspond to Google Drive.</div>'
+            f'<div style="font-size:0.75rem;color:{t["muted"]};margin-top:4px">'
+            f'Checked {INVOICES_FOLDER} and {OFFERS_FOLDER} against the Documents database.</div>'
+            f'</div>', unsafe_allow_html=True)
+    else:
+        error_items = [d for d in doc_discrepancies if d['severity'] == 'error']
+        warn_items = [d for d in doc_discrepancies if d['severity'] == 'warning']
+        info_items = [d for d in doc_discrepancies if d['severity'] == 'info']
+
+        st.markdown(
+            f'<div style="{_card_base};border-left:3px solid {C_RED}">'
+            f'<div style="color:{t["text"]};font-size:0.85rem;font-weight:600">'
+            f'Warning \u2014 {len(doc_discrepancies)} change(s) detected between Documents database and Google Drive:</div>'
+            f'</div>', unsafe_allow_html=True)
+
+        for d in error_items:
+            st.markdown(
+                f'<div style="{_card_base};border-left:3px solid {C_RED};margin-left:12px">'
+                f'<div style="color:{C_RED};font-size:0.82rem">{d["message"]}</div>'
+                f'</div>', unsafe_allow_html=True)
+
+        for d in warn_items:
+            st.markdown(
+                f'<div style="{_card_base};border-left:3px solid {C_AMBER};margin-left:12px">'
+                f'<div style="color:{t["text"]};font-size:0.82rem">{d["message"]}</div>'
+                f'</div>', unsafe_allow_html=True)
+
+        for d in info_items:
+            st.markdown(
+                f'<div style="{_card_base};border-left:3px solid {C_BLUE};margin-left:12px">'
+                f'<div style="color:{t["text"]};font-size:0.82rem">{d["message"]}</div>'
+                f'</div>', unsafe_allow_html=True)
+
+        st.markdown(
+            f'<div style="font-size:0.75rem;color:{t["muted"]};margin:4px 0 12px 12px;font-style:italic">'
+            f'This is a read-only check. No files or records have been modified.</div>',
+            unsafe_allow_html=True)
+
+    st.markdown(f'<hr style="border:none;border-top:1px solid {t["border"]};margin:16px 0">', unsafe_allow_html=True)
 
     # For NEW invoices, try to extract data from PDF
     for c in changes:
@@ -4183,6 +4402,1631 @@ def sync_invoices_dialog():
                 st.rerun()
 
 
+# ─── Offer / Invoice / Client System ─────────────────────────────────────────
+
+# ── Helpers: European number formatting ──────────────────────────────────────
+
+def _fmt_eur(val):
+    """Format a number in European style: 1.234,56 EUR"""
+    if val is None or val == '':
+        return '0,00 EUR'
+    try:
+        n = float(val)
+    except (ValueError, TypeError):
+        return '0,00 EUR'
+    sign = '-' if n < 0 else ''
+    n = abs(n)
+    integer_part = int(n)
+    decimal_part = round((n - integer_part) * 100)
+    if decimal_part >= 100:
+        integer_part += 1
+        decimal_part = 0
+    int_str = f'{integer_part:,}'.replace(',', '.')
+    return f'{sign}{int_str},{decimal_part:02d} EUR'
+
+
+def _fmt_eur_symbol(val):
+    """Format a number in European style with € symbol: 1.234,56 €"""
+    s = _fmt_eur(val)
+    return s.replace(' EUR', ' €')
+
+
+def _parse_eur_input(s):
+    """Parse a European-formatted price string into a float.
+    Handles: '700,00' '1.234,56' '700' '700.00' etc."""
+    if s is None or str(s).strip() == '':
+        return 0.0
+    s = str(s).strip().replace('€', '').replace('EUR', '').strip()
+    # European format: period as thousands sep, comma as decimal
+    if ',' in s:
+        s = s.replace('.', '').replace(',', '.')
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return 0.0
+
+
+# ── Helpers: Client data loading ─────────────────────────────────────────────
+
+def _load_clients_from_sheet():
+    """Load clients from the 'Clients' worksheet. Creates it if missing."""
+    try:
+        sh = _gsheet()
+        try:
+            ws = sh.worksheet('Clients')
+        except gspread.WorksheetNotFound:
+            # Create the Clients worksheet matching existing schema
+            ws = sh.add_worksheet(title='Clients', rows=100, cols=6)
+            headers = ['ID', 'Name', 'Address', 'Notes', 'Country', 'Added']
+            ws.append_row(headers, value_input_option='RAW')
+            for c in SEED_CLIENTS:
+                ws.append_row([
+                    c['id'], c['name'], c.get('address', ''),
+                    c.get('notes', ''), c.get('country', ''),
+                    datetime.now().strftime('%Y-%m-%d'),
+                ], value_input_option='RAW')
+            _load_clients_cached.clear()
+            return _load_clients_cached()
+
+        rows = ws.get_all_records()
+        clients = []
+        for r in rows:
+            # Support both 'ID' and 'Client_ID' header variants
+            cid = str(r.get('ID', '') or r.get('Client_ID', ''))
+            clients.append({
+                'id': cid,
+                'name': str(r.get('Name', '')),
+                'address': str(r.get('Address', '')),
+                'notes': str(r.get('Notes', '')),
+                'country': str(r.get('Country', '')),
+            })
+        return clients
+    except Exception as e:
+        st.warning(f"Could not load clients: {e}")
+        return list(SEED_CLIENTS)
+
+
+@st.cache_data(ttl=60)
+def _load_clients_cached():
+    """Cached client list loader."""
+    return _load_clients_from_sheet()
+
+
+def _get_next_client_number():
+    """Get the next available K-number by scanning existing clients."""
+    clients = _load_clients_cached()
+    max_num = 10000
+    for c in clients:
+        cid = str(c.get('id', ''))
+        if cid.startswith('K'):
+            try:
+                num = int(cid[1:])
+                if num > max_num:
+                    max_num = num
+            except ValueError:
+                pass
+    return f'K{max_num + 1:05d}'
+
+
+def _add_client_to_sheet(client_data):
+    """Add a new client to the Clients sheet.
+    Sheet columns: ID, Name, Address, Notes, Country, Added"""
+    try:
+        sh = _gsheet()
+        ws = sh.worksheet('Clients')
+        ws.append_row([
+            client_data['id'],
+            client_data['name'],
+            client_data.get('address', ''),
+            client_data.get('notes', ''),
+            client_data.get('country', ''),
+            datetime.now().strftime('%Y-%m-%d'),
+        ], value_input_option='RAW')
+        _load_clients_cached.clear()
+        return True
+    except Exception as e:
+        st.error(f"Failed to save client: {e}")
+        return False
+
+
+# ── Helpers: Document numbering ──────────────────────────────────────────────
+
+def _get_next_doc_number(doc_type):
+    """Get the next available document number by scanning the Drive folder.
+    doc_type: 'offer' or 'invoice'"""
+    try:
+        year_folder = _get_year_folder()
+        if not year_folder:
+            # Fallback to simple counter
+            return f'{"AG" if doc_type == "offer" else "RE"}{CURRENT_YEAR}001'
+
+        if doc_type == 'offer':
+            folder_name = OFFERS_FOLDER
+            prefix = 'AG'
+            pattern = r'AG(\d+)'
+        else:
+            folder_name = INVOICES_FOLDER
+            prefix = 'RE'
+            pattern = r'RE(\d+)'
+
+        folder_id = _drive_find_folder(year_folder, folder_name)
+        if not folder_id:
+            return f'{prefix}{CURRENT_YEAR}001'
+
+        files = _drive_list_files(folder_id)
+        max_num = 0
+        for f in files:
+            match = re.search(pattern, f['name'])
+            if match:
+                try:
+                    num = int(match.group(1))
+                    if num > max_num:
+                        max_num = num
+                except ValueError:
+                    pass
+
+        if max_num == 0:
+            # No existing files — start at YEAR + 001
+            return f'{prefix}{CURRENT_YEAR}001'
+        else:
+            return f'{prefix}{max_num + 1:0{len(str(max_num))}d}'
+    except Exception:
+        return f'{"AG" if doc_type == "offer" else "RE"}{CURRENT_YEAR}001'
+
+
+# ── Helpers: Documents worksheet ─────────────────────────────────────────────
+
+def _get_or_create_documents_sheet():
+    """Get or create the Documents worksheet for storing offers/invoices."""
+    sh = _gsheet()
+    try:
+        ws = sh.worksheet('Documents')
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title='Documents', rows=500, cols=25)
+        headers = [
+            'ID', 'Type', 'Number', 'Date', 'Client_ID', 'Client_Name',
+            'Client_Address', 'Project_Title', 'Project_Description',
+            'Category', 'Status', 'Line_Items_JSON', 'Netto', 'USt',
+            'Brutto', 'Validity_Days', 'Service_Date', 'Payment_Terms',
+            'Drive_File_ID', 'Drive_Filename', 'Source_Offer_Number',
+            'Created_At', 'Updated_At'
+        ]
+        ws.append_row(headers, value_input_option='RAW')
+    return ws
+
+
+@st.cache_data(ttl=30)
+def _load_documents():
+    """Load all documents from the Documents sheet."""
+    try:
+        ws = _get_or_create_documents_sheet()
+        rows = ws.get_all_records()
+        return rows
+    except Exception as e:
+        st.warning(f"Could not load documents: {e}")
+        return []
+
+
+def _invalidate_documents_cache():
+    """Clear the documents cache."""
+    _load_documents.clear()
+
+
+def _save_document_to_sheet(form_data, status='draft', doc_number=None):
+    """Save a document (offer/invoice) to the Documents sheet.
+    Returns the document number on success, None on failure."""
+    try:
+        ws = _get_or_create_documents_sheet()
+
+        # Generate document number if not provided
+        if not doc_number:
+            doc_type = 'offer' if form_data['mode'] == 'offer' else 'invoice'
+            doc_number = _get_next_doc_number(doc_type)
+
+        # Generate a unique ID
+        doc_id = f"{form_data['type']}_{doc_number}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+
+        # Serialize line items to JSON
+        line_items_json = json.dumps(form_data.get('line_items', []), ensure_ascii=False)
+
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        row = [
+            doc_id,                                          # ID
+            form_data.get('type', ''),                       # Type (Angebot/Rechnung)
+            doc_number,                                      # Number
+            form_data.get('date', ''),                       # Date
+            form_data.get('client_id', ''),                  # Client_ID
+            form_data.get('client_name', ''),                # Client_Name
+            form_data.get('client_address', ''),             # Client_Address
+            form_data.get('project_title', ''),              # Project_Title
+            form_data.get('project_description', ''),        # Project_Description
+            form_data.get('category', ''),                   # Category
+            status,                                          # Status
+            line_items_json,                                 # Line_Items_JSON
+            f"{form_data.get('netto', 0):.2f}",             # Netto
+            f"{form_data.get('ust', 0):.2f}",               # USt
+            f"{form_data.get('brutto', 0):.2f}",            # Brutto
+            str(form_data.get('validity_days', '')),         # Validity_Days
+            form_data.get('service_date', ''),               # Service_Date
+            form_data.get('payment_terms', ''),              # Payment_Terms
+            '',                                              # Drive_File_ID
+            '',                                              # Drive_Filename
+            form_data.get('source_offer_number', ''),        # Source_Offer_Number
+            now_str,                                         # Created_At
+            now_str,                                         # Updated_At
+        ]
+
+        ws.append_row(row, value_input_option='RAW')
+        _invalidate_documents_cache()
+        _log_activity('DRAFT_SAVED', f'{form_data["type"]} {doc_number} saved as draft')
+        return doc_number
+
+    except Exception as e:
+        st.error(f"Failed to save document: {e}")
+        return None
+
+
+def _update_document_in_sheet(doc_number, updates):
+    """Update an existing document in the Documents sheet.
+    updates: dict of column_name -> new_value."""
+    try:
+        ws = _get_or_create_documents_sheet()
+        all_records = ws.get_all_records()
+        headers = ws.row_values(1)
+
+        for idx, record in enumerate(all_records):
+            if str(record.get('Number', '')) == str(doc_number):
+                row_num = idx + 2  # +1 for header, +1 for 1-based indexing
+                for col_name, new_val in updates.items():
+                    if col_name in headers:
+                        col_idx = headers.index(col_name) + 1
+                        ws.update_cell(row_num, col_idx, str(new_val))
+                updates_with_time = dict(updates)
+                updates_with_time['Updated_At'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                if 'Updated_At' in headers:
+                    col_idx = headers.index('Updated_At') + 1
+                    ws.update_cell(row_num, col_idx, updates_with_time['Updated_At'])
+                _invalidate_documents_cache()
+                return True
+
+        return False
+    except Exception as e:
+        st.error(f"Failed to update document: {e}")
+        return False
+
+
+# ── PDF Generation ───────────────────────────────────────────────────────────
+
+def _fmt_eur_pdf(val):
+    """Format a number in European style for PDF: 1.234,56"""
+    if val is None:
+        return '0,00'
+    try:
+        n = float(val)
+    except (ValueError, TypeError):
+        return '0,00'
+    sign = '-' if n < 0 else ''
+    n = abs(n)
+    integer_part = int(n)
+    decimal_part = round((n - integer_part) * 100)
+    if decimal_part >= 100:
+        integer_part += 1
+        decimal_part = 0
+    int_str = f'{integer_part:,}'.replace(',', '.')
+    return f'{sign}{int_str},{decimal_part:02d}'
+
+
+def _generate_document_pdf(form_data, doc_number):
+    """Generate a PDF document matching the reference invoice layout.
+    Returns PDF bytes on success, None on failure."""
+    biz = BIZ_INFO
+    is_invoice = form_data['mode'] == 'invoice'
+    doc_type_label = 'INVOICE' if is_invoice else 'ESTIMATE'
+
+    pdf = FPDF(orientation='P', unit='mm', format='A4')
+    pdf.set_auto_page_break(auto=True, margin=25)
+    pdf.add_page()
+
+    # Page dimensions
+    pw = 210  # A4 width
+    ml = 25   # left margin
+    mr = 20   # right margin
+    usable = pw - ml - mr
+
+    # ── Green accent line at very top ──
+    pdf.set_fill_color(11, 71, 20)  # #0B4714
+    pdf.rect(0, 0, pw, 3, 'F')
+
+    # ── Header: Josef Sindelka (top right) ──
+    pdf.set_y(15)
+    pdf.set_font('Helvetica', 'B', 24)
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(usable, 10, biz['name'], align='R', new_x='LMARGIN', new_y='NEXT')
+    pdf.set_font('Helvetica', '', 9)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(usable, 4, biz['email'], align='R', new_x='LMARGIN', new_y='NEXT')
+    pdf.cell(usable, 4, biz['website'], align='R', new_x='LMARGIN', new_y='NEXT')
+
+    # ── Sender line (small, above client) ──
+    pdf.set_y(45)
+    pdf.set_font('Helvetica', '', 7)
+    pdf.set_text_color(100, 100, 100)
+    sender_line = f"{biz['name']}  \u00b7  {biz['street']}  \u00b7  {biz['city']}"
+    pdf.cell(usable / 2, 4, sender_line, new_x='LMARGIN', new_y='NEXT')
+
+    # ── Client block (left side) ──
+    pdf.set_y(52)
+    pdf.set_font('Helvetica', 'B', 11)
+    pdf.set_text_color(0, 0, 0)
+    client_name = form_data.get('client_name', '')
+    pdf.cell(usable / 2, 6, client_name, new_x='LMARGIN', new_y='NEXT')
+    pdf.set_font('Helvetica', '', 10)
+    client_addr = form_data.get('client_address', '')
+    for line in client_addr.split(','):
+        line = line.strip()
+        if line:
+            pdf.cell(usable / 2, 5, line, new_x='LMARGIN', new_y='NEXT')
+
+    # ── Document metadata (right side, aligned with client block) ──
+    meta_x = ml + usable / 2 + 10
+    meta_w_label = 35
+    meta_w_value = usable / 2 - 10 - meta_w_label
+    meta_y = 52
+
+    pdf.set_font('Helvetica', '', 10)
+    pdf.set_text_color(80, 80, 80)
+
+    meta_items = []
+    if is_invoice:
+        meta_items.append(('Invoice No.', doc_number))
+    else:
+        meta_items.append(('Estimate No.', doc_number))
+    meta_items.append(('Client No.', form_data.get('client_id', '')))
+    meta_items.append(('Date', form_data.get('date', '')))
+
+    if is_invoice:
+        sd = form_data.get('service_date', '')
+        if sd:
+            meta_items.append(('Delivery', sd))
+    else:
+        validity = form_data.get('validity_days', 30)
+        date_obj = form_data.get('date_obj')
+        if date_obj:
+            valid_until = date_obj + timedelta(days=int(validity))
+            meta_items.append(('Valid until', valid_until.strftime('%d.%m.%Y')))
+
+    for label, value in meta_items:
+        pdf.set_xy(meta_x, meta_y)
+        pdf.set_font('Helvetica', '', 10)
+        pdf.set_text_color(80, 80, 80)
+        pdf.cell(meta_w_label, 6, label, new_x='END')
+        pdf.set_font('Helvetica', 'B', 10)
+        pdf.set_text_color(0, 0, 0)
+        pdf.cell(meta_w_value, 6, str(value), align='R')
+        meta_y += 7
+
+    # ── Document type heading ──
+    heading_y = max(pdf.get_y(), meta_y) + 15
+    pdf.set_y(heading_y)
+    pdf.set_font('Helvetica', 'B', 20)
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(usable, 10, doc_type_label, new_x='LMARGIN', new_y='NEXT')
+
+    # ── Project subtitle ──
+    project_title = form_data.get('project_title', '')
+    if project_title or client_name:
+        pdf.set_font('Helvetica', 'B', 11)
+        pdf.set_text_color(0, 0, 0)
+        subtitle = project_title if project_title else client_name
+        pdf.cell(usable, 7, subtitle, new_x='LMARGIN', new_y='NEXT')
+        pdf.ln(2)
+
+    # ── Project description ──
+    desc = form_data.get('project_description', '')
+    if desc:
+        pdf.set_font('Helvetica', '', 9)
+        pdf.set_text_color(80, 80, 80)
+        pdf.multi_cell(usable, 4, desc, new_x='LMARGIN', new_y='NEXT')
+        pdf.ln(4)
+
+    # ── Line items table ──
+    line_items = form_data.get('line_items', [])
+    col_widths = [12, usable * 0.40, 18, 25, 30, 30]  # Pos, Desc, Qty, Unit, Price, Total
+    # Adjust description width to fill remaining space
+    col_widths[1] = usable - col_widths[0] - col_widths[2] - col_widths[3] - col_widths[4] - col_widths[5]
+
+    # Table header
+    pdf.set_font('Helvetica', 'B', 9)
+    pdf.set_text_color(80, 80, 80)
+    pdf.set_fill_color(245, 245, 245)
+    headers = ['Pos.', 'Description', 'Qty', 'Unit', 'Unit Price', 'Total EUR']
+    aligns = ['L', 'L', 'R', 'L', 'R', 'R']
+    for i, (hdr, w, a) in enumerate(zip(headers, col_widths, aligns)):
+        pdf.cell(w, 8, hdr, align=a, fill=True,
+                 new_x='END' if i < len(headers) - 1 else 'LMARGIN',
+                 new_y='LAST' if i < len(headers) - 1 else 'NEXT')
+
+    # Header bottom border
+    pdf.set_draw_color(200, 200, 200)
+    pdf.line(ml, pdf.get_y(), pw - mr, pdf.get_y())
+
+    # Table rows
+    pdf.set_font('Helvetica', '', 10)
+    pdf.set_text_color(0, 0, 0)
+    for idx, item in enumerate(line_items):
+        desc_text = item.get('desc', '')
+        qty_val = _parse_eur_input(item.get('qty', '0'))
+        price_val = _parse_eur_input(item.get('price', '0'))
+        unit_text = item.get('unit', 'pcs')
+        line_total = qty_val * price_val
+
+        row_data = [
+            str(idx + 1),
+            desc_text,
+            _fmt_eur_pdf(qty_val) if qty_val != int(qty_val) else str(int(qty_val)) if qty_val == int(qty_val) and qty_val < 1000 else _fmt_eur_pdf(qty_val),
+            unit_text,
+            _fmt_eur_pdf(price_val),
+            _fmt_eur_pdf(line_total),
+        ]
+
+        # Format qty nicely
+        if qty_val == int(qty_val):
+            row_data[2] = f'{int(qty_val):,}'.replace(',', '.')
+        else:
+            row_data[2] = _fmt_eur_pdf(qty_val)
+
+        y_before = pdf.get_y()
+        for i, (val, w, a) in enumerate(zip(row_data, col_widths, aligns)):
+            pdf.cell(w, 8, val, align=a,
+                     new_x='END' if i < len(row_data) - 1 else 'LMARGIN',
+                     new_y='LAST' if i < len(row_data) - 1 else 'NEXT')
+
+        # Row bottom border
+        pdf.set_draw_color(235, 235, 235)
+        pdf.line(ml, pdf.get_y(), pw - mr, pdf.get_y())
+
+    # ── Totals ──
+    pdf.ln(6)
+    totals_x = pw - mr - 80
+    netto = form_data.get('netto', 0)
+    ust = form_data.get('ust', 0)
+    brutto = form_data.get('brutto', 0)
+
+    # Subtotal
+    pdf.set_xy(totals_x, pdf.get_y())
+    pdf.set_font('Helvetica', '', 10)
+    pdf.set_text_color(80, 80, 80)
+    pdf.cell(40, 7, 'Subtotal (Netto)', align='R', new_x='END')
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(40, 7, f'{_fmt_eur_pdf(netto)} EUR', align='R', new_x='LMARGIN', new_y='NEXT')
+
+    # USt
+    pdf.set_xy(totals_x, pdf.get_y())
+    pdf.set_text_color(80, 80, 80)
+    pdf.cell(40, 7, 'USt. 19%', align='R', new_x='END')
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(40, 7, f'{_fmt_eur_pdf(ust)} EUR', align='R', new_x='LMARGIN', new_y='NEXT')
+
+    # Divider
+    pdf.set_draw_color(0, 0, 0)
+    pdf.line(totals_x, pdf.get_y() + 1, pw - mr, pdf.get_y() + 1)
+    pdf.ln(3)
+
+    # Grand total
+    pdf.set_xy(totals_x, pdf.get_y())
+    pdf.set_font('Helvetica', 'B', 12)
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(40, 8, 'Total (Brutto)', align='R', new_x='END')
+    pdf.cell(40, 8, f'{_fmt_eur_pdf(brutto)} EUR', align='R', new_x='LMARGIN', new_y='NEXT')
+
+    # ── Payment terms (invoice only) ──
+    if is_invoice:
+        pt = form_data.get('payment_terms', 'Zahlbar sofort, rein netto')
+        if pt:
+            pdf.ln(10)
+            pdf.set_font('Helvetica', '', 9)
+            pdf.set_text_color(80, 80, 80)
+            pdf.cell(usable, 5, f'Payment terms: {pt}', new_x='LMARGIN', new_y='NEXT')
+
+    # ── Offer validity (offer only) ──
+    if not is_invoice:
+        validity = form_data.get('validity_days', 30)
+        date_obj = form_data.get('date_obj')
+        pdf.ln(10)
+        pdf.set_font('Helvetica', '', 9)
+        pdf.set_text_color(80, 80, 80)
+        if date_obj:
+            valid_until = date_obj + timedelta(days=int(validity))
+            pdf.cell(usable, 5, f'This offer is valid until {valid_until.strftime("%d.%m.%Y")} ({validity} days).', new_x='LMARGIN', new_y='NEXT')
+        else:
+            pdf.cell(usable, 5, f'This offer is valid for {validity} days from the date above.', new_x='LMARGIN', new_y='NEXT')
+        pdf.cell(usable, 5, 'Payment terms: Zahlbar sofort, rein netto.', new_x='LMARGIN', new_y='NEXT')
+
+    # ── Footer ──
+    # Position footer at bottom of page
+    footer_y = 260
+    if pdf.get_y() > footer_y - 20:
+        pdf.add_page()
+        footer_y = 260
+
+    pdf.set_y(footer_y)
+
+    # Footer divider
+    pdf.set_draw_color(200, 200, 200)
+    pdf.line(ml, footer_y, pw - mr, footer_y)
+    pdf.ln(4)
+
+    # 3-column footer
+    col_w = usable / 3
+    footer_y = pdf.get_y()
+
+    # Column 1: Business details
+    pdf.set_xy(ml, footer_y)
+    pdf.set_font('Helvetica', 'B', 7)
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(col_w, 3.5, biz['name'], new_x='LMARGIN', new_y='NEXT')
+    pdf.set_font('Helvetica', '', 7)
+    pdf.set_text_color(80, 80, 80)
+    pdf.cell(col_w, 3.5, biz['street'], new_x='LMARGIN', new_y='NEXT')
+    pdf.cell(col_w, 3.5, biz['city'], new_x='LMARGIN', new_y='NEXT')
+
+    # Column 2: Tax information
+    pdf.set_xy(ml + col_w, footer_y)
+    pdf.set_font('Helvetica', 'B', 7)
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(col_w, 3.5, 'Tax Information')
+    pdf.set_xy(ml + col_w, footer_y + 3.5)
+    pdf.set_font('Helvetica', '', 7)
+    pdf.set_text_color(80, 80, 80)
+    pdf.cell(col_w, 3.5, f'USt-IdNr.: {biz["ust_id"]}')
+    pdf.set_xy(ml + col_w, footer_y + 7)
+    pdf.cell(col_w, 3.5, f'Steuernr.: {biz["steuernummer"]}')
+
+    # Column 3: Bank details (always on invoices, optionally on offers)
+    if is_invoice:
+        pdf.set_xy(ml + col_w * 2, footer_y)
+        pdf.set_font('Helvetica', 'B', 7)
+        pdf.set_text_color(0, 0, 0)
+        pdf.cell(col_w, 3.5, 'Bank Details')
+        pdf.set_xy(ml + col_w * 2, footer_y + 3.5)
+        pdf.set_font('Helvetica', '', 7)
+        pdf.set_text_color(80, 80, 80)
+        pdf.cell(col_w, 3.5, f'Bank: {biz["bank"]}')
+        pdf.set_xy(ml + col_w * 2, footer_y + 7)
+        pdf.cell(col_w, 3.5, f'IBAN: {biz["iban"]}')
+        pdf.set_xy(ml + col_w * 2, footer_y + 10.5)
+        pdf.cell(col_w, 3.5, f'BIC: {biz["bic"]}')
+
+    return pdf.output()
+
+
+def _generate_and_process_pdf(form_data):
+    """Generate PDF, trigger download, upload to Drive, and save to sheet.
+    Returns (doc_number, success) tuple."""
+    is_invoice = form_data['mode'] == 'invoice'
+
+    # Get next document number
+    doc_type = 'invoice' if is_invoice else 'offer'
+    doc_number = _get_next_doc_number(doc_type)
+
+    # Generate PDF
+    try:
+        pdf_bytes = _generate_document_pdf(form_data, doc_number)
+    except Exception as e:
+        st.error(f"PDF generation failed: {e}")
+        return None, False
+
+    # Build filename
+    if is_invoice:
+        filename = f"notpaid_RECHNUNG_JosefSindelka_{doc_number}.pdf"
+        folder_name = INVOICES_FOLDER
+        status = 'pending'
+    else:
+        filename = f"Angebot_JosefSindelka_{doc_number}.pdf"
+        folder_name = OFFERS_FOLDER
+        status = 'sent'
+
+    # Trigger browser download via Streamlit
+    b64 = base64.b64encode(pdf_bytes).decode()
+    st.markdown(f'''
+        <a href="data:application/pdf;base64,{b64}" download="{filename}"
+           style="display:none" id="pdf-download-{doc_number}">download</a>
+        <script>
+            document.getElementById('pdf-download-{doc_number}').click();
+        </script>
+    ''', unsafe_allow_html=True)
+    st.download_button(
+        label=f"Download {filename}",
+        data=pdf_bytes,
+        file_name=filename,
+        mime='application/pdf',
+        key=f'dl_{doc_number}'
+    )
+
+    # Upload to Google Drive
+    drive_file_id = ''
+    try:
+        year_folder = _get_year_folder()
+        if year_folder:
+            folder_id = _drive_find_folder(year_folder, folder_name)
+            if not folder_id:
+                folder_id = _drive_get_or_create_folder(year_folder, folder_name)
+            if folder_id:
+                result = _drive_upload_bytes(folder_id, filename, pdf_bytes, 'application/pdf')
+                drive_file_id = result.get('id', '') if result else ''
+                if drive_file_id:
+                    st.success(f'{filename} uploaded to Google Drive.')
+                else:
+                    st.warning('PDF generated but Drive upload returned no ID.')
+            else:
+                st.warning(f'Could not find or create {folder_name} folder on Drive.')
+        else:
+            st.warning('Could not find year folder on Drive. PDF was downloaded but not uploaded.')
+    except Exception as e:
+        st.warning(f'Drive upload failed: {e}. PDF was downloaded locally.')
+
+    # Save to Documents sheet
+    form_data_with_drive = dict(form_data)
+    doc_number_saved = _save_document_to_sheet(
+        form_data_with_drive, status=status, doc_number=doc_number
+    )
+    if doc_number_saved:
+        # Update with Drive info
+        if drive_file_id:
+            _update_document_in_sheet(doc_number, {
+                'Drive_File_ID': drive_file_id,
+                'Drive_Filename': filename,
+            })
+
+    _log_activity('PDF_GENERATED', f'{form_data["type"]} {doc_number} — {filename}')
+    return doc_number, True
+
+
+# ── Form state management ────────────────────────────────────────────────────
+
+def _init_form_state(mode):
+    """Initialize or reset form state for offer/invoice creation.
+    mode: 'offer' or 'invoice'"""
+    prefix = f'df_{mode}_'
+
+    # Only init if not already set (prevents resetting on rerun)
+    if f'{prefix}initialized' not in st.session_state:
+        st.session_state[f'{prefix}initialized'] = True
+        st.session_state[f'{prefix}client_idx'] = 0
+        st.session_state[f'{prefix}lines'] = [
+            {'desc': '', 'qty': '1', 'unit': 'pcs', 'price': ''}
+        ]
+        st.session_state[f'{prefix}nonce'] = 0
+
+
+def _reset_form_state(mode):
+    """Force reset form state."""
+    prefix = f'df_{mode}_'
+    keys_to_remove = [k for k in st.session_state if k.startswith(prefix)]
+    for k in keys_to_remove:
+        del st.session_state[k]
+
+
+# ── Main form renderer ───────────────────────────────────────────────────────
+
+def _render_doc_form(mode, data):
+    """Render the offer/invoice creation form.
+    mode: 'offer' or 'invoice'"""
+    t = _t()
+    prefix = f'df_{mode}_'
+
+    _init_form_state(mode)
+
+    # Title and subtitle
+    if mode == 'offer':
+        title = 'New Offer'
+        subtitle = 'Create a new offer for a client'
+    else:
+        title = 'New Invoice'
+        subtitle = 'Create a new invoice for a client'
+
+    # Check if we're editing an existing draft
+    editing_id = st.session_state.get(f'{prefix}editing_id')
+    if editing_id:
+        doc_number = st.session_state.get(f'{prefix}editing_number', '')
+        title = f'Edit {"Offer" if mode == "offer" else "Invoice"} {doc_number}'
+        subtitle = f'Editing existing {"offer" if mode == "offer" else "invoice"}'
+
+    st.markdown(f'''
+        <h1 style="font-size:24px;font-weight:700;letter-spacing:-0.3px;
+                   color:{t['text']};margin-bottom:8px;font-family:{FONT}">
+            {title}
+        </h1>
+        <p style="font-size:13px;color:{t['muted']};margin-bottom:32px;font-family:{FONT}">
+            {subtitle}
+        </p>
+    ''', unsafe_allow_html=True)
+
+    # Load clients
+    clients = _load_clients_cached()
+    client_options = ['— Select Client —'] + [
+        f"{c['name']} ({c['id']})" for c in clients
+    ] + ['— New Client —']
+
+    # ── Start the form card ──
+    st.markdown(f'''
+        <div style="background:{t['surface']};border:1px solid {t['border']};
+                    border-radius:3px;padding:28px;margin-bottom:20px">
+    ''', unsafe_allow_html=True)
+
+    # ── Row 1: Client + Address ──
+    col_client, col_addr = st.columns(2, gap="medium")
+    with col_client:
+        client_sel = st.selectbox(
+            'CLIENT NAME / COMPANY',
+            options=client_options,
+            key=f'{prefix}client_sel',
+            label_visibility='visible'
+        )
+
+    # Auto-fill address when client changes
+    selected_client = None
+    if client_sel and client_sel not in ('— Select Client —', '— New Client —'):
+        for c in clients:
+            if f"{c['name']} ({c['id']})" == client_sel:
+                selected_client = c
+                break
+    prev_sel_key = f'{prefix}prev_client_sel'
+    addr_key = f'{prefix}client_addr'
+    if client_sel != st.session_state.get(prev_sel_key):
+        st.session_state[prev_sel_key] = client_sel
+        if selected_client:
+            st.session_state[addr_key] = selected_client.get('address', '')
+        elif client_sel in ('— Select Client —', '— New Client —'):
+            st.session_state[addr_key] = ''
+
+    with col_addr:
+        client_address = st.text_input(
+            'CLIENT ADDRESS',
+            key=addr_key,
+            placeholder='e.g. New-York-Ring 6, 22297 Hamburg'
+        )
+
+    # ── New Client inline form ──
+    if client_sel == '— New Client —':
+        st.markdown(f'''
+            <div style="background:{t['surface2']};border:1px solid {t['border']};
+                        border-radius:3px;padding:16px;margin:8px 0 16px 0">
+                <div style="font-size:11px;font-weight:600;text-transform:uppercase;
+                            letter-spacing:0.8px;color:{t['muted']};margin-bottom:12px;
+                            font-family:{FONT}">
+                    NEW CLIENT
+                </div>
+        ''', unsafe_allow_html=True)
+        nc_col1, nc_col2 = st.columns(2)
+        with nc_col1:
+            new_client_name = st.text_input('COMPANY NAME', key=f'{prefix}new_client_name',
+                                            placeholder='e.g. Acme GmbH')
+        with nc_col2:
+            new_client_address = st.text_input('ADDRESS', key=f'{prefix}new_client_address',
+                                               placeholder='e.g. Musterstr. 1, 20095 Hamburg')
+        nc_col3, nc_col4 = st.columns(2)
+        with nc_col3:
+            new_client_contact = st.text_input('CONTACT PERSON', key=f'{prefix}new_client_contact',
+                                               placeholder='e.g. Max Mustermann')
+        with nc_col4:
+            new_client_email = st.text_input('EMAIL', key=f'{prefix}new_client_email',
+                                             placeholder='e.g. info@acme.de')
+
+        next_k = _get_next_client_number()
+        if st.button(f'Create Client ({next_k})', key=f'{prefix}create_client_btn'):
+            name = st.session_state.get(f'{prefix}new_client_name', '').strip()
+            if name:
+                new_client = {
+                    'id': next_k,
+                    'name': name,
+                    'address': st.session_state.get(f'{prefix}new_client_address', ''),
+                    'contact_person': st.session_state.get(f'{prefix}new_client_contact', ''),
+                    'email': st.session_state.get(f'{prefix}new_client_email', ''),
+                }
+                if _add_client_to_sheet(new_client):
+                    st.success(f'Client {next_k} created.')
+                    st.rerun()
+            else:
+                st.warning('Please enter a company name.')
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── Row 2: Project Title + Date ──
+    col_title, col_date = st.columns(2, gap="medium")
+    with col_title:
+        project_title = st.text_input(
+            'PROJECT TITLE',
+            key=f'{prefix}project_title',
+            placeholder='e.g. HR Recruitment Photography'
+        )
+    with col_date:
+        doc_date = st.date_input(
+            'DATE',
+            value=datetime.now().date(),
+            key=f'{prefix}date',
+            format='DD.MM.YYYY'
+        )
+
+    # ── Project Description ──
+    project_desc = st.text_area(
+        'PROJECT DESCRIPTION',
+        key=f'{prefix}project_desc',
+        placeholder='Brief project description...',
+        height=100
+    )
+
+    # ── Internal Category ──
+    category = st.selectbox(
+        'INTERNAL CATEGORY',
+        options=INCOME_CATEGORIES,
+        key=f'{prefix}category',
+        help='Internal only — will not appear on the PDF'
+    )
+
+    # ── Mode-specific fields ──
+    if mode == 'offer':
+        validity = st.number_input(
+            'VALIDITY (DAYS)',
+            min_value=1, max_value=365, value=30,
+            key=f'{prefix}validity'
+        )
+    else:
+        # Invoice-specific fields
+        inv_col1, inv_col2 = st.columns(2, gap="medium")
+        with inv_col1:
+            service_date = st.text_input(
+                'SERVICE / DELIVERY DATE OR PERIOD',
+                key=f'{prefix}service_date',
+                placeholder='e.g. 15.02.2026 or 01.02.–15.02.2026'
+            )
+        with inv_col2:
+            payment_terms = st.text_input(
+                'PAYMENT TERMS',
+                value='Zahlbar sofort, rein netto',
+                key=f'{prefix}payment_terms'
+            )
+
+    # ── Line Items ──
+    st.markdown(f'''
+        <h2 style="font-size:18px;font-weight:600;color:{t['text']};
+                   margin-top:24px;margin-bottom:16px;font-family:{FONT}">
+            Line Items
+        </h2>
+    ''', unsafe_allow_html=True)
+
+    lines_key = f'{prefix}lines'
+    lines = st.session_state.get(lines_key, [{'desc': '', 'qty': '1', 'unit': 'pcs', 'price': ''}])
+
+    # Table header
+    st.markdown(f'''
+        <div style="display:grid;grid-template-columns:5% 40% 12% 15% 18% 5%;
+                    gap:0;padding:8px;border-bottom:2px solid {t['border']};
+                    font-size:10px;font-weight:600;text-transform:uppercase;
+                    letter-spacing:0.8px;color:{t['muted']};font-family:{FONT}">
+            <div>#</div>
+            <div>Description</div>
+            <div>Qty</div>
+            <div>Unit</div>
+            <div>Unit Price (EUR)</div>
+            <div></div>
+        </div>
+    ''', unsafe_allow_html=True)
+
+    # Render each line item
+    subtotal = 0.0
+    lines_to_keep = []
+    remove_idx = None
+
+    for i, line in enumerate(lines):
+        cols = st.columns([0.5, 4, 1.2, 1.5, 1.8, 0.5])
+        with cols[0]:
+            st.markdown(f'''
+                <div style="padding:10px 0;font-size:13px;color:{t['text']};
+                            font-weight:600;font-family:{FONT}">{i + 1}</div>
+            ''', unsafe_allow_html=True)
+        with cols[1]:
+            desc = st.text_input('desc', value=line.get('desc', ''),
+                                 key=f'{prefix}line_desc_{i}',
+                                 placeholder='Service description',
+                                 label_visibility='collapsed')
+        with cols[2]:
+            qty = st.text_input('qty', value=str(line.get('qty', '1')),
+                                key=f'{prefix}line_qty_{i}',
+                                placeholder='1',
+                                label_visibility='collapsed')
+        with cols[3]:
+            unit = st.text_input('unit', value=line.get('unit', 'pcs'),
+                                 key=f'{prefix}line_unit_{i}',
+                                 placeholder='pcs/hrs/days',
+                                 label_visibility='collapsed')
+        with cols[4]:
+            price = st.text_input('price', value=line.get('price', ''),
+                                  key=f'{prefix}line_price_{i}',
+                                  placeholder='0,00',
+                                  label_visibility='collapsed')
+        with cols[5]:
+            if st.button('×', key=f'{prefix}line_rm_{i}', help='Remove line'):
+                remove_idx = i
+
+        # Calculate line total
+        qty_val = _parse_eur_input(qty) if qty else 0
+        price_val = _parse_eur_input(price) if price else 0
+        line_total = qty_val * price_val
+        subtotal += line_total
+
+        lines_to_keep.append({'desc': desc, 'qty': qty, 'unit': unit, 'price': price})
+
+    # Handle remove
+    if remove_idx is not None and len(lines_to_keep) > 1:
+        lines_to_keep.pop(remove_idx)
+        st.session_state[lines_key] = lines_to_keep
+        st.rerun()
+    else:
+        st.session_state[lines_key] = lines_to_keep
+
+    # Add Line button
+    if st.button('+ Add Line', key=f'{prefix}add_line'):
+        st.session_state[lines_key].append({'desc': '', 'qty': '1', 'unit': 'pcs', 'price': ''})
+        st.rerun()
+
+    # ── Totals ──
+    vat = subtotal * VAT_RATE
+    brutto = subtotal + vat
+
+    st.markdown(f'''
+        <div style="display:flex;justify-content:flex-end;margin-top:20px">
+            <table style="width:280px;border-collapse:collapse;font-family:{FONT}">
+                <tr>
+                    <td style="text-align:right;padding:6px 16px 6px 0;
+                               color:{t['text_secondary']};font-size:13px">Subtotal (Netto)</td>
+                    <td style="text-align:right;font-weight:600;font-size:14px;
+                               font-variant-numeric:tabular-nums;color:{t['text']}">{_fmt_eur(subtotal)}</td>
+                </tr>
+                <tr>
+                    <td style="text-align:right;padding:6px 16px 6px 0;
+                               color:{t['text_secondary']};font-size:13px">USt. 19%</td>
+                    <td style="text-align:right;font-weight:600;font-size:14px;
+                               font-variant-numeric:tabular-nums;color:{t['text']}">{_fmt_eur(vat)}</td>
+                </tr>
+                <tr>
+                    <td style="text-align:right;padding:14px 16px 6px 0;
+                               color:{t['text']};font-size:13px;font-weight:600;
+                               border-top:2px solid {t['text']}">Total (Brutto)</td>
+                    <td style="text-align:right;font-weight:700;font-size:16px;
+                               font-variant-numeric:tabular-nums;color:{t['text']};
+                               padding-top:14px;border-top:2px solid {t['text']}">{_fmt_eur(brutto)}</td>
+                </tr>
+            </table>
+        </div>
+    ''', unsafe_allow_html=True)
+
+    # ── Close the card div ──
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── Action Buttons ──
+    btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 4])
+    with btn_col1:
+        generate_clicked = st.button('Generate PDF', key=f'{prefix}generate_pdf',
+                                     type='primary', use_container_width=True)
+    with btn_col2:
+        draft_clicked = st.button('Save as Draft', key=f'{prefix}save_draft',
+                                  use_container_width=True)
+
+    # ── Collect form data ──
+    form_data = {
+        'mode': mode,
+        'type': 'Angebot' if mode == 'offer' else 'Rechnung',
+        'client_selection': client_sel,
+        'client_id': selected_client['id'] if selected_client else '',
+        'client_name': selected_client['name'] if selected_client else (
+            st.session_state.get(f'{prefix}new_client_name', '') if client_sel == '— New Client —' else ''
+        ),
+        'client_address': client_address,
+        'project_title': project_title,
+        'project_description': project_desc,
+        'category': category,
+        'date': doc_date.strftime('%d.%m.%Y') if doc_date else '',
+        'date_obj': doc_date,
+        'line_items': lines_to_keep,
+        'netto': subtotal,
+        'ust': vat,
+        'brutto': brutto,
+    }
+
+    if mode == 'offer':
+        form_data['validity_days'] = validity
+    else:
+        form_data['service_date'] = st.session_state.get(f'{prefix}service_date', '')
+        form_data['payment_terms'] = st.session_state.get(f'{prefix}payment_terms', 'Zahlbar sofort, rein netto')
+
+    # Handle button clicks
+    if generate_clicked:
+        if not form_data['client_name']:
+            st.warning('Please select or create a client.')
+        elif subtotal <= 0:
+            st.warning('Please add at least one line item with a price.')
+        else:
+            with st.spinner('Generating PDF...'):
+                doc_num, success = _generate_and_process_pdf(form_data)
+                if success:
+                    st.success(f'{form_data["type"]} {doc_num} generated successfully.')
+
+    if draft_clicked:
+        if not form_data['client_name']:
+            st.warning('Please select or create a client.')
+        else:
+            # Check if editing an existing draft
+            editing_id = st.session_state.get(f'{prefix}editing_id')
+            if editing_id:
+                # Update existing document
+                updates = {
+                    'Client_ID': form_data.get('client_id', ''),
+                    'Client_Name': form_data.get('client_name', ''),
+                    'Client_Address': form_data.get('client_address', ''),
+                    'Project_Title': form_data.get('project_title', ''),
+                    'Project_Description': form_data.get('project_description', ''),
+                    'Category': form_data.get('category', ''),
+                    'Date': form_data.get('date', ''),
+                    'Line_Items_JSON': json.dumps(form_data.get('line_items', []), ensure_ascii=False),
+                    'Netto': f"{form_data.get('netto', 0):.2f}",
+                    'USt': f"{form_data.get('ust', 0):.2f}",
+                    'Brutto': f"{form_data.get('brutto', 0):.2f}",
+                    'Validity_Days': str(form_data.get('validity_days', '')),
+                    'Service_Date': form_data.get('service_date', ''),
+                    'Payment_Terms': form_data.get('payment_terms', ''),
+                }
+                doc_number = st.session_state.get(f'{prefix}editing_number', '')
+                if _update_document_in_sheet(doc_number, updates):
+                    st.success(f'Draft {doc_number} updated.')
+                    _log_activity('DRAFT_UPDATED', f'{form_data["type"]} {doc_number} updated')
+            else:
+                # Save new draft
+                doc_number = _save_document_to_sheet(form_data, status='draft')
+                if doc_number:
+                    st.success(f'Draft saved as {doc_number}.')
+
+    return form_data
+
+
+# ── Tab functions for new views ──────────────────────────────────────────────
+
+def tab_new_offer(data):
+    """New Offer creation form."""
+    _render_doc_form('offer', data)
+
+
+def tab_new_invoice(data):
+    """New Invoice creation form."""
+    _render_doc_form('invoice', data)
+
+
+def tab_offers_invoices(data):
+    """Offers & Invoices management view — combined table for offers and invoices."""
+    t = _t()
+    is_dark = st.session_state.get('theme', 'light') == 'dark'
+
+    st.markdown(f'<h1 style="font-size:24px;font-weight:700;letter-spacing:-0.3px;color:{t["text"]};margin-bottom:8px;font-family:{FONT}">Offers & Invoices</h1>', unsafe_allow_html=True)
+    st.markdown(f'<p style="font-size:13px;color:{t["muted"]};margin-bottom:32px;font-family:{FONT}">Manage all your offers and invoices</p>', unsafe_allow_html=True)
+
+    # ── Load documents ──
+    docs = _load_documents()
+
+    # ── Type toggle: All / Offers / Invoices ──
+    if 'oi_type_filter' not in st.session_state:
+        st.session_state['oi_type_filter'] = 'all'
+    if 'oi_status_filter' not in st.session_state:
+        st.session_state['oi_status_filter'] = 'all'
+
+    # Type filter row
+    type_options = ['All', 'Offers', 'Invoices']
+    tcols = st.columns(len(type_options) + 6)
+    for i, opt in enumerate(type_options):
+        key_val = opt.lower()
+        is_active = st.session_state['oi_type_filter'] == key_val
+        if tcols[i].button(
+            opt,
+            key=f'oi_type_{key_val}',
+            type='primary' if is_active else 'secondary',
+            use_container_width=True,
+        ):
+            st.session_state['oi_type_filter'] = key_val
+            st.rerun()
+
+    # Status filter row
+    status_options = ['All', 'Draft', 'Sent', 'Pending', 'Paid']
+    scols = st.columns(len(status_options) + 5)
+    for i, opt in enumerate(status_options):
+        key_val = opt.lower()
+        is_active = st.session_state['oi_status_filter'] == key_val
+        if scols[i].button(
+            opt,
+            key=f'oi_status_{key_val}',
+            type='primary' if is_active else 'secondary',
+            use_container_width=True,
+        ):
+            st.session_state['oi_status_filter'] = key_val
+            st.rerun()
+
+    # ── Filter documents ──
+    type_filter = st.session_state['oi_type_filter']
+    status_filter = st.session_state['oi_status_filter']
+
+    filtered = docs
+    if type_filter == 'offers':
+        filtered = [d for d in filtered if str(d.get('Type', '')).lower() in ('angebot', 'offer')]
+    elif type_filter == 'invoices':
+        filtered = [d for d in filtered if str(d.get('Type', '')).lower() in ('rechnung', 'invoice')]
+
+    if status_filter != 'all':
+        filtered = [d for d in filtered if str(d.get('Status', '')).lower() == status_filter]
+
+    # Sort by Created_At descending (newest first)
+    filtered.sort(key=lambda d: d.get('Created_At', ''), reverse=True)
+
+    # ── Badge helper ──
+    def _status_badge(status_str):
+        s = str(status_str).lower().strip()
+        badge_map = {
+            'draft': ('badge-draft', 'Draft'),
+            'sent': ('badge-sent', 'Sent'),
+            'pending': ('badge-sent', 'Pending'),
+            'paid': ('badge-paid', 'Paid'),
+        }
+        css_cls, label = badge_map.get(s, ('badge-draft', status_str.title()))
+        return f'<span class="badge {css_cls}" style="text-transform:uppercase;font-size:11px;font-weight:600;letter-spacing:0.5px;padding:3px 10px;border-radius:2px;">{label}</span>'
+
+    def _type_label(type_str):
+        s = str(type_str).lower().strip()
+        if s in ('angebot', 'offer'):
+            return 'Offer'
+        elif s in ('rechnung', 'invoice'):
+            return 'Invoice'
+        return type_str.title()
+
+    # ── Render table ──
+    if not filtered:
+        st.markdown(f'''
+        <div style="text-align:center;color:{t["muted"]};padding:40px;font-size:14px;font-family:{FONT};
+            background:{t["surface"]};border:1px solid {t["border"]};border-radius:3px;">
+            No documents found.
+        </div>''', unsafe_allow_html=True)
+    else:
+        # Table header
+        header_style = f'font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;color:{t["muted"]};padding:10px 0;border-bottom:2px solid {t["border"]};font-family:{FONT}'
+        row_style = f'font-size:13px;color:{t["text"]};border-bottom:1px solid {t["row_border"]};font-family:{FONT}'
+
+        table_rows = []
+        for doc in filtered:
+            num = doc.get('Number', '')
+            doc_type = _type_label(doc.get('Type', ''))
+            client = doc.get('Client_Name', '')
+            project = doc.get('Project_Title', '') or '\u2014'
+            netto = doc.get('Netto', 0)
+            try:
+                netto_f = float(str(netto).replace(',', '.'))
+            except (ValueError, TypeError):
+                netto_f = 0
+            amount_str = _fmt_eur(netto_f)
+            date_str = doc.get('Date', '')
+            status = doc.get('Status', 'draft')
+            badge = _status_badge(status)
+
+            table_rows.append(f'''
+            <tr style="transition:background 0.1s;">
+                <td style="{row_style};font-weight:600;padding:12px 8px 12px 0;">{num}</td>
+                <td style="{row_style};padding:12px 8px;">{doc_type}</td>
+                <td style="{row_style};padding:12px 8px;">{client}</td>
+                <td style="{row_style};padding:12px 8px;">{project}</td>
+                <td style="{row_style};font-variant-numeric:tabular-nums;padding:12px 8px;">{amount_str}</td>
+                <td style="{row_style};padding:12px 8px;">{date_str}</td>
+                <td style="{row_style};padding:12px 8px;">{badge}</td>
+            </tr>''')
+
+        table_html = f'''
+        <div style="background:{t["surface"]};border:1px solid {t["border"]};border-radius:3px;padding:0 20px;overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;">
+                <thead>
+                    <tr>
+                        <th style="{header_style};text-align:left;">Number</th>
+                        <th style="{header_style};text-align:left;">Type</th>
+                        <th style="{header_style};text-align:left;">Client</th>
+                        <th style="{header_style};text-align:left;">Project</th>
+                        <th style="{header_style};text-align:left;">Amount</th>
+                        <th style="{header_style};text-align:left;">Date</th>
+                        <th style="{header_style};text-align:left;">Status</th>
+                    </tr>
+                </thead>
+                <tbody>{"".join(table_rows)}</tbody>
+            </table>
+        </div>'''
+        st.markdown(table_html, unsafe_allow_html=True)
+
+    st.markdown('<div style="height:16px;"></div>', unsafe_allow_html=True)
+
+    # ── Action section for selected document ──
+    if filtered:
+        st.markdown(f'<p style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;color:{t["muted"]};margin:16px 0 8px;font-family:{FONT}">Actions</p>', unsafe_allow_html=True)
+
+        # Document selector
+        doc_options = [f"{d.get('Number','')} — {_type_label(d.get('Type',''))} — {d.get('Client_Name','')}" for d in filtered]
+        selected_idx = st.selectbox('Select document', range(len(doc_options)), format_func=lambda i: doc_options[i], key='oi_selected_doc', label_visibility='collapsed')
+
+        if selected_idx is not None and selected_idx < len(filtered):
+            sel_doc = filtered[selected_idx]
+            doc_num = sel_doc.get('Number', '')
+            doc_status = str(sel_doc.get('Status', '')).lower()
+            doc_type_raw = str(sel_doc.get('Type', '')).lower()
+            is_offer = doc_type_raw in ('angebot', 'offer')
+
+            acols = st.columns(6)
+
+            # ── Edit button ──
+            with acols[0]:
+                if st.button('Edit', key=f'oi_edit_{doc_num}', use_container_width=True):
+                    # Load doc data into the form and navigate to edit page
+                    mode = 'offer' if is_offer else 'invoice'
+                    prefix = f'df_{mode}_'
+                    # Clear existing form state
+                    for k in list(st.session_state.keys()):
+                        if k.startswith(prefix):
+                            del st.session_state[k]
+                    # Set editing state
+                    st.session_state[f'{prefix}editing_id'] = sel_doc.get('ID', '')
+                    st.session_state[f'{prefix}editing_number'] = doc_num
+                    # Pre-fill form
+                    try:
+                        items = json.loads(sel_doc.get('Line_Items_JSON', '[]'))
+                    except (json.JSONDecodeError, TypeError):
+                        items = []
+                    st.session_state[f'{prefix}lines'] = items if items else [{'desc': '', 'qty': '1', 'unit': 'pcs', 'price': ''}]
+                    st.session_state[f'{prefix}initialized'] = True
+                    st.session_state[f'{prefix}nonce'] = 0
+                    st.session_state[f'{prefix}project_title'] = sel_doc.get('Project_Title', '')
+                    st.session_state[f'{prefix}project_desc'] = sel_doc.get('Project_Description', '')
+                    st.session_state[f'{prefix}category'] = sel_doc.get('Category', '')
+                    st.session_state[f'{prefix}client_address'] = sel_doc.get('Client_Address', '')
+                    # Navigate
+                    st.session_state['active_page'] = 'New Offer' if is_offer else 'New Invoice'
+                    st.rerun()
+
+            # ── Status change button ──
+            with acols[1]:
+                if st.button('Status', key=f'oi_status_{doc_num}', use_container_width=True):
+                    st.session_state['oi_status_modal'] = doc_num
+
+            # ── Re-generate PDF ──
+            with acols[2]:
+                if st.button('PDF', key=f'oi_pdf_{doc_num}', use_container_width=True):
+                    # Re-generate PDF from stored data
+                    try:
+                        items = json.loads(sel_doc.get('Line_Items_JSON', '[]'))
+                    except (json.JSONDecodeError, TypeError):
+                        items = []
+                    netto_val = float(str(sel_doc.get('Netto', 0)).replace(',', '.')) if sel_doc.get('Netto') else 0
+                    ust_val = float(str(sel_doc.get('USt', 0)).replace(',', '.')) if sel_doc.get('USt') else 0
+                    brutto_val = float(str(sel_doc.get('Brutto', 0)).replace(',', '.')) if sel_doc.get('Brutto') else 0
+                    # Parse date
+                    date_str = sel_doc.get('Date', '')
+                    date_obj = None
+                    try:
+                        from datetime import datetime as dt_cls
+                        date_obj = dt_cls.strptime(date_str, '%d.%m.%Y').date()
+                    except Exception:
+                        date_obj = date.today()
+                    form_data = {
+                        'mode': 'offer' if is_offer else 'invoice',
+                        'type': sel_doc.get('Type', ''),
+                        'client_id': sel_doc.get('Client_ID', ''),
+                        'client_name': sel_doc.get('Client_Name', ''),
+                        'client_address': sel_doc.get('Client_Address', ''),
+                        'project_title': sel_doc.get('Project_Title', ''),
+                        'project_description': sel_doc.get('Project_Description', ''),
+                        'date': date_str,
+                        'date_obj': date_obj,
+                        'line_items': items,
+                        'netto': netto_val,
+                        'ust': ust_val,
+                        'brutto': brutto_val,
+                        'validity_days': sel_doc.get('Validity_Days', 30),
+                        'service_date': sel_doc.get('Service_Date', ''),
+                        'payment_terms': sel_doc.get('Payment_Terms', ''),
+                    }
+                    with st.spinner('Generating PDF...'):
+                        try:
+                            pdf_bytes = _generate_document_pdf(form_data, doc_num)
+                            if is_offer:
+                                fn = f"Angebot_JosefSindelka_{doc_num}.pdf"
+                            else:
+                                prefix_fn = 'notpaid_' if doc_status != 'paid' else ''
+                                fn = f"{prefix_fn}RECHNUNG_JosefSindelka_{doc_num}.pdf"
+                            st.download_button(
+                                label=f"Download {fn}",
+                                data=pdf_bytes,
+                                file_name=fn,
+                                mime='application/pdf',
+                                key=f'oi_dl_{doc_num}'
+                            )
+                        except Exception as e:
+                            st.error(f"PDF generation failed: {e}")
+
+            # ── Convert to Invoice (offers only) ──
+            with acols[3]:
+                if is_offer:
+                    if st.button('→ Invoice', key=f'oi_convert_{doc_num}', use_container_width=True):
+                        st.session_state['oi_convert_modal'] = doc_num
+
+            # ── Delete ──
+            with acols[4]:
+                if st.button('Delete', key=f'oi_del_{doc_num}', use_container_width=True):
+                    st.session_state['oi_delete_modal'] = doc_num
+
+    # ── Status change modal ──
+    if 'oi_status_modal' in st.session_state and st.session_state['oi_status_modal']:
+        modal_doc_num = st.session_state['oi_status_modal']
+        st.markdown(f'<hr style="border:none;border-top:1px solid {t["border"]};margin:16px 0;">', unsafe_allow_html=True)
+        st.markdown(f'<p style="font-size:16px;font-weight:600;color:{t["text"]};font-family:{FONT}">Update Status — {modal_doc_num}</p>', unsafe_allow_html=True)
+        new_status = st.selectbox('New Status', ['draft', 'sent', 'pending', 'paid'], key='oi_new_status')
+        mcols = st.columns([1, 1, 4])
+        with mcols[0]:
+            if st.button('Update', key='oi_confirm_status', type='primary', use_container_width=True):
+                if _update_document_in_sheet(modal_doc_num, {'Status': new_status}):
+                    # If invoice and status changed to/from paid, rename on Drive
+                    doc_match = [d for d in docs if d.get('Number') == modal_doc_num]
+                    if doc_match:
+                        dm = doc_match[0]
+                        drive_id = dm.get('Drive_File_ID', '')
+                        old_fn = dm.get('Drive_Filename', '')
+                        doc_type_raw = str(dm.get('Type', '')).lower()
+                        if drive_id and old_fn and doc_type_raw in ('rechnung', 'invoice'):
+                            if new_status == 'paid' and old_fn.startswith('notpaid_'):
+                                new_fn = old_fn.replace('notpaid_', '', 1)
+                                try:
+                                    _drive_rename_file(drive_id, new_fn)
+                                    _update_document_in_sheet(modal_doc_num, {'Drive_Filename': new_fn})
+                                except Exception:
+                                    pass
+                            elif new_status != 'paid' and not old_fn.startswith('notpaid_'):
+                                new_fn = 'notpaid_' + old_fn
+                                try:
+                                    _drive_rename_file(drive_id, new_fn)
+                                    _update_document_in_sheet(modal_doc_num, {'Drive_Filename': new_fn})
+                                except Exception:
+                                    pass
+                    st.success(f'Status of {modal_doc_num} updated to {new_status}.')
+                    _log_activity('STATUS_CHANGED', f'{modal_doc_num} → {new_status}')
+                    st.session_state['oi_status_modal'] = None
+                    st.rerun()
+        with mcols[1]:
+            if st.button('Cancel', key='oi_cancel_status', use_container_width=True):
+                st.session_state['oi_status_modal'] = None
+                st.rerun()
+
+    # ── Convert to Invoice modal ──
+    if 'oi_convert_modal' in st.session_state and st.session_state['oi_convert_modal']:
+        modal_doc_num = st.session_state['oi_convert_modal']
+        st.markdown(f'<hr style="border:none;border-top:1px solid {t["border"]};margin:16px 0;">', unsafe_allow_html=True)
+        st.markdown(f'<p style="font-size:16px;font-weight:600;color:{t["text"]};font-family:{FONT}">Convert {modal_doc_num} to Invoice</p>', unsafe_allow_html=True)
+        st.markdown(f'<p style="font-size:13px;color:{t["muted"]};font-family:{FONT}">This will create a new invoice pre-filled with the offer data. The original offer will remain unchanged.</p>', unsafe_allow_html=True)
+        ccols = st.columns([1, 1, 4])
+        with ccols[0]:
+            if st.button('Convert', key='oi_confirm_convert', type='primary', use_container_width=True):
+                # Find the source offer
+                src = [d for d in docs if d.get('Number') == modal_doc_num]
+                if src:
+                    s = src[0]
+                    # Load into invoice form
+                    prefix = 'df_invoice_'
+                    for k in list(st.session_state.keys()):
+                        if k.startswith(prefix):
+                            del st.session_state[k]
+                    try:
+                        items = json.loads(s.get('Line_Items_JSON', '[]'))
+                    except (json.JSONDecodeError, TypeError):
+                        items = []
+                    st.session_state[f'{prefix}lines'] = items if items else [{'desc': '', 'qty': '1', 'unit': 'pcs', 'price': ''}]
+                    st.session_state[f'{prefix}initialized'] = True
+                    st.session_state[f'{prefix}nonce'] = 0
+                    st.session_state[f'{prefix}project_title'] = s.get('Project_Title', '')
+                    st.session_state[f'{prefix}project_desc'] = s.get('Project_Description', '')
+                    st.session_state[f'{prefix}category'] = s.get('Category', '')
+                    st.session_state[f'{prefix}client_address'] = s.get('Client_Address', '')
+                    st.session_state[f'{prefix}source_offer'] = modal_doc_num
+                    st.session_state['oi_convert_modal'] = None
+                    st.session_state['active_page'] = 'New Invoice'
+                    st.rerun()
+        with ccols[1]:
+            if st.button('Cancel', key='oi_cancel_convert', use_container_width=True):
+                st.session_state['oi_convert_modal'] = None
+                st.rerun()
+
+    # ── Delete modal ──
+    if 'oi_delete_modal' in st.session_state and st.session_state['oi_delete_modal']:
+        modal_doc_num = st.session_state['oi_delete_modal']
+        st.markdown(f'<hr style="border:none;border-top:1px solid {t["border"]};margin:16px 0;">', unsafe_allow_html=True)
+        st.markdown(f'<p style="font-size:16px;font-weight:600;color:{t["text"]};font-family:{FONT}">Delete {modal_doc_num}</p>', unsafe_allow_html=True)
+        st.markdown(f'<p style="font-size:13px;color:{t["muted"]};font-family:{FONT}">Are you sure? This action cannot be undone.</p>', unsafe_allow_html=True)
+        dcols = st.columns([1, 1, 4])
+        with dcols[0]:
+            if st.button('Delete', key='oi_confirm_del', type='primary', use_container_width=True):
+                # Delete from sheet
+                try:
+                    ws = _get_or_create_documents_sheet()
+                    all_records = ws.get_all_records()
+                    for idx, rec in enumerate(all_records):
+                        if str(rec.get('Number', '')) == str(modal_doc_num):
+                            ws.delete_rows(idx + 2)
+                            break
+                    # Also try to delete from Drive
+                    doc_match = [d for d in docs if d.get('Number') == modal_doc_num]
+                    if doc_match and doc_match[0].get('Drive_File_ID'):
+                        try:
+                            _drive_delete_file(doc_match[0]['Drive_File_ID'])
+                        except Exception:
+                            pass
+                    _invalidate_documents_cache()
+                    _log_activity('DOC_DELETED', f'{modal_doc_num} deleted')
+                    st.success(f'{modal_doc_num} deleted.')
+                    st.session_state['oi_delete_modal'] = None
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Delete failed: {e}")
+        with dcols[1]:
+            if st.button('Cancel', key='oi_cancel_del', use_container_width=True):
+                st.session_state['oi_delete_modal'] = None
+                st.rerun()
+
+
+def tab_clients(data):
+    """Clients management view — table + add/edit."""
+    t = _t()
+    is_dark = st.session_state.get('theme', 'light') == 'dark'
+
+    st.markdown(f'<h1 style="font-size:24px;font-weight:700;letter-spacing:-0.3px;color:{t["text"]};margin-bottom:8px;font-family:{FONT}">Clients</h1>', unsafe_allow_html=True)
+    st.markdown(f'<p style="font-size:13px;color:{t["muted"]};margin-bottom:32px;font-family:{FONT}">Manage your client database</p>', unsafe_allow_html=True)
+
+    # ── Load clients and documents ──
+    clients = _load_clients_cached()
+    docs = _load_documents()
+
+    # Count documents per client
+    doc_counts = {}
+    for d in docs:
+        cid = d.get('Client_ID', '')
+        if cid:
+            doc_counts[cid] = doc_counts.get(cid, 0) + 1
+
+    # ── Render clients table ──
+    if not clients:
+        st.markdown(f'''
+        <div style="text-align:center;color:{t["muted"]};padding:40px;font-size:14px;font-family:{FONT};
+            background:{t["surface"]};border:1px solid {t["border"]};border-radius:3px;">
+            No clients yet. Add your first client below.
+        </div>''', unsafe_allow_html=True)
+    else:
+        header_style = f'font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;color:{t["muted"]};padding:10px 0;border-bottom:2px solid {t["border"]};font-family:{FONT}'
+        row_style = f'font-size:13px;color:{t["text"]};border-bottom:1px solid {t["row_border"]};font-family:{FONT}'
+
+        table_rows = []
+        for c in clients:
+            cid = c.get('id', '')
+            name = c.get('name', '')
+            address = c.get('address', '') or '\u2014'
+            notes = c.get('notes', '') or '\u2014'
+            country = c.get('country', '') or ''
+            num_docs = doc_counts.get(cid, 0)
+
+            table_rows.append(f'''
+            <tr>
+                <td style="{row_style};font-weight:600;padding:12px 8px 12px 0;">{cid}</td>
+                <td style="{row_style};padding:12px 8px;">{name}</td>
+                <td style="{row_style};padding:12px 8px;">{address}</td>
+                <td style="{row_style};padding:12px 8px;font-size:12px;color:{t["muted"]};max-width:250px;">{notes}</td>
+                <td style="{row_style};padding:12px 8px;">{country}</td>
+                <td style="{row_style};padding:12px 8px;font-variant-numeric:tabular-nums;">{num_docs}</td>
+            </tr>''')
+
+        table_html = f'''
+        <div style="background:{t["surface"]};border:1px solid {t["border"]};border-radius:3px;padding:0 20px;overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;">
+                <thead>
+                    <tr>
+                        <th style="{header_style};text-align:left;">Client No.</th>
+                        <th style="{header_style};text-align:left;">Name</th>
+                        <th style="{header_style};text-align:left;">Address</th>
+                        <th style="{header_style};text-align:left;">Notes</th>
+                        <th style="{header_style};text-align:left;">Country</th>
+                        <th style="{header_style};text-align:left;">Docs</th>
+                    </tr>
+                </thead>
+                <tbody>{"".join(table_rows)}</tbody>
+            </table>
+        </div>'''
+        st.markdown(table_html, unsafe_allow_html=True)
+
+    st.markdown('<div style="height:16px;"></div>', unsafe_allow_html=True)
+
+    # ── Edit existing client ──
+    if clients:
+        st.markdown(f'<p style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;color:{t["muted"]};margin:16px 0 8px;font-family:{FONT}">Edit Client</p>', unsafe_allow_html=True)
+        client_options = [f"{c.get('id','')} — {c.get('name','')}" for c in clients]
+        sel_idx = st.selectbox('Select client to edit', range(len(client_options)), format_func=lambda i: client_options[i], key='cl_edit_sel', label_visibility='collapsed')
+
+        if sel_idx is not None and sel_idx < len(clients):
+            sel_client = clients[sel_idx]
+            ec1, ec2 = st.columns(2)
+            with ec1:
+                edit_name = st.text_input('Name', value=sel_client.get('name', ''), key='cl_edit_name')
+            with ec2:
+                edit_country = st.text_input('Country', value=sel_client.get('country', ''), key='cl_edit_country')
+            edit_address = st.text_input('Address', value=sel_client.get('address', ''), key='cl_edit_address')
+            edit_notes = st.text_input('Notes', value=sel_client.get('notes', ''), key='cl_edit_notes')
+
+            if st.button('Save Changes', key='cl_save_edit', use_container_width=False):
+                # Update in Google Sheet (columns: ID, Name, Address, Notes, Country, Added)
+                try:
+                    ws = _gsheet().worksheet('Clients')
+                    all_records = ws.get_all_records()
+                    headers = ws.row_values(1)
+                    target_id = sel_client.get('id', '')
+                    for idx, rec in enumerate(all_records):
+                        rec_id = str(rec.get('ID', '') or rec.get('Client_ID', ''))
+                        if rec_id == str(target_id):
+                            row_num = idx + 2
+                            updates = {
+                                'Name': edit_name.strip(),
+                                'Address': edit_address.strip(),
+                                'Notes': edit_notes.strip(),
+                                'Country': edit_country.strip(),
+                            }
+                            for col_name, val in updates.items():
+                                if col_name in headers:
+                                    col_idx = headers.index(col_name) + 1
+                                    ws.update_cell(row_num, col_idx, val)
+                            _load_clients_cached.clear()
+                            _log_activity('CLIENT_UPDATED', f'{target_id} — {edit_name}')
+                            st.success(f'Client {target_id} updated.')
+                            st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to update client: {e}")
+
+    # ── Add new client ──
+    st.markdown(f'<hr style="border:none;border-top:1px solid {t["border"]};margin:20px 0;">', unsafe_allow_html=True)
+    st.markdown(f'<p style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;color:{t["muted"]};margin:0 0 8px;font-family:{FONT}">Add New Client</p>', unsafe_allow_html=True)
+
+    nc1, nc2 = st.columns(2)
+    with nc1:
+        new_name = st.text_input('Client / Company Name', key='cl_new_name')
+    with nc2:
+        new_country = st.text_input('Country', key='cl_new_country')
+    new_address = st.text_input('Address', key='cl_new_address')
+    new_notes = st.text_input('Notes', key='cl_new_notes')
+
+    if st.button('+ Add Client', key='cl_add_new', use_container_width=False):
+        if not new_name.strip():
+            st.warning('Please enter a client name.')
+        else:
+            try:
+                next_id = _get_next_client_number()
+                client_data = {
+                    'id': next_id,
+                    'name': new_name.strip(),
+                    'address': new_address.strip(),
+                    'notes': new_notes.strip(),
+                    'country': new_country.strip(),
+                }
+                _add_client_to_sheet(client_data)
+                _log_activity('CLIENT_ADDED', f'{next_id} — {new_name.strip()}')
+                st.success(f'Client {next_id} — {new_name.strip()} added.')
+                # Clear fields
+                for k in ['cl_new_name', 'cl_new_address', 'cl_new_notes', 'cl_new_country']:
+                    if k in st.session_state:
+                        st.session_state[k] = ''
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed to add client: {e}")
+
+
 # ─── Main ────────────────────────────────────────────────────────────────────
 
 def main():
@@ -4241,24 +6085,46 @@ def main():
         if 'active_page' not in st.session_state:
             st.session_state['active_page'] = 'Dashboard'
 
-        PAGES = {
-            'Dashboard': 'tab_overview',
-            'Expenses': 'tab_expenses',
-            'Income': 'tab_income',
-            'Goal Tracker': 'tab_goal',
-            'Taxes': 'tab_taxes',
-            '2025': 'tab_2025',
-        }
+        OVERVIEW_PAGES = ['Dashboard', 'Expenses', 'Income', 'Goal Tracker', 'Taxes', '2025']
+        CREATE_PAGES = ['New Offer', 'New Invoice']
+        MANAGE_PAGES = ['Offers & Invoices', 'Clients']
 
-        for page_name in PAGES:
+        def _sidebar_nav_item(page_name, key_suffix=None):
             is_active = st.session_state['active_page'] == page_name
             container_class = 'nav-active' if is_active else 'nav-item'
+            btn_key = f"nav_{key_suffix or page_name}"
             with st.container():
                 st.markdown(f'<div class="{container_class}">', unsafe_allow_html=True)
-                if st.button(page_name, key=f"nav_{page_name}", use_container_width=True):
+                if st.button(page_name, key=btn_key, use_container_width=True):
                     st.session_state['active_page'] = page_name
                     st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
+
+        # OVERVIEW nav items
+        for page_name in OVERVIEW_PAGES:
+            _sidebar_nav_item(page_name)
+
+        # CREATE section
+        st.markdown(f'''
+            <div style="padding:20px 24px 6px;font-size:10px;text-transform:uppercase;
+                        letter-spacing:1.5px;color:{t['sidebar_section']};font-family:{FONT};
+                        font-weight:500">
+                CREATE
+            </div>
+        ''', unsafe_allow_html=True)
+        for page_name in CREATE_PAGES:
+            _sidebar_nav_item(page_name)
+
+        # MANAGE section
+        st.markdown(f'''
+            <div style="padding:20px 24px 6px;font-size:10px;text-transform:uppercase;
+                        letter-spacing:1.5px;color:{t['sidebar_section']};font-family:{FONT};
+                        font-weight:500">
+                MANAGE
+            </div>
+        ''', unsafe_allow_html=True)
+        for page_name in MANAGE_PAGES:
+            _sidebar_nav_item(page_name)
 
         # Bottom section: theme toggle + date
         st.markdown(f'<div style="border-top:1px solid {t["sidebar_border"]};margin:20px 0 0 0;padding-top:12px"></div>', unsafe_allow_html=True)
@@ -4340,6 +6206,14 @@ def main():
         tab_taxes(data)
     elif active == '2025':
         tab_2025(data)
+    elif active == 'New Offer':
+        tab_new_offer(data)
+    elif active == 'New Invoice':
+        tab_new_invoice(data)
+    elif active == 'Offers & Invoices':
+        tab_offers_invoices(data)
+    elif active == 'Clients':
+        tab_clients(data)
 
     # ── Activity Log (#10) ──
     log_entries = _load_activity_log()

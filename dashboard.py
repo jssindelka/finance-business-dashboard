@@ -5040,23 +5040,29 @@ def _generate_document_pdf(form_data, doc_number):
 
     # ── Line items table ──
     line_items = form_data.get('line_items', [])
-    cw = [12, 0, 18, 25, 30, 30]  # Pos, Desc(auto), Qty, Unit, Price, Total
-    cw[1] = usable - sum(cw)
-    aligns = ['L', 'L', 'R', 'L', 'R', 'R']
 
-    # Table header
+    # Column layout with gaps between columns (matching template spacing)
+    # Each tuple: (offset_from_ml, text_width, alignment)
+    #              Pos     Description   Qty      Unit     UnitPrice  Total
+    tbl_cols = [  (0, 13, 'L'), (15, 57, 'L'), (74, 13, 'R'),
+                  (89, 17, 'L'), (108, 25, 'R'), (135, 30, 'R') ]
+
+    # Table header — full-width grey background
+    hdr_y = pdf.get_y()
+    pdf.set_fill_color(245, 245, 245)
+    pdf.rect(ml, hdr_y, usable, 8, 'F')
     pdf.set_font('Helvetica', 'B', 9)
     pdf.set_text_color(80, 80, 80)
-    pdf.set_fill_color(245, 245, 245)
     hdrs = ['Pos.', 'Description', 'Qty', 'Unit', 'Unit Price', f'Total {eur}']
-    for i, (h, w, a) in enumerate(zip(hdrs, cw, aligns)):
-        pdf.cell(w, 8, h, align=a, fill=True,
-                 new_x='END' if i < 5 else 'LMARGIN',
-                 new_y='LAST' if i < 5 else 'NEXT')
+    for h, (xoff, w, a) in zip(hdrs, tbl_cols):
+        pdf.set_xy(ml + xoff, hdr_y)
+        pdf.cell(w, 8, h, align=a)
+    pdf.set_y(hdr_y + 8)
     pdf.set_draw_color(200, 200, 200)
     pdf.line(ml, pdf.get_y(), pw - mr, pdf.get_y())
 
-    # Data rows — description column is BOLD
+    # Data rows — description bold, absolute column positioning
+    row_h = 10
     for idx, item in enumerate(line_items):
         d_text = _sanitize_for_pdf(item.get('desc', ''))
         qty_v = _parse_eur_input(item.get('qty', '0'))
@@ -5066,15 +5072,13 @@ def _generate_document_pdf(form_data, doc_number):
         qty_s = f'{int(qty_v):,}'.replace(',', '.') if qty_v == int(qty_v) else _fmt_eur_pdf(qty_v)
         row = [str(idx + 1), d_text, qty_s, u_text, _fmt_eur_pdf(prc_v), _fmt_eur_pdf(tot_v)]
 
-        for i, (val, w, a) in enumerate(zip(row, cw, aligns)):
-            if i == 1:
-                pdf.set_font('Helvetica', 'B', 10)   # Description bold
-            else:
-                pdf.set_font('Helvetica', '', 10)
+        row_y = pdf.get_y()
+        for i, (val, (xoff, w, a)) in enumerate(zip(row, tbl_cols)):
+            pdf.set_font('Helvetica', 'B' if i == 1 else '', 10)
             pdf.set_text_color(0, 0, 0)
-            pdf.cell(w, 8, val, align=a,
-                     new_x='END' if i < 5 else 'LMARGIN',
-                     new_y='LAST' if i < 5 else 'NEXT')
+            pdf.set_xy(ml + xoff, row_y)
+            pdf.cell(w, row_h, val, align=a)
+        pdf.set_y(row_y + row_h)
         pdf.set_draw_color(235, 235, 235)
         pdf.line(ml, pdf.get_y(), pw - mr, pdf.get_y())
 

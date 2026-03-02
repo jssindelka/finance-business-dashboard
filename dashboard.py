@@ -4870,6 +4870,31 @@ def _fmt_eur_pdf(val):
     return f'{sign}{int_str},{decimal_part:02d}'
 
 
+def _sanitize_for_pdf(text):
+    """Replace Unicode characters unsupported by Helvetica with ASCII equivalents."""
+    if not isinstance(text, str):
+        text = str(text)
+    replacements = {
+        '\u2013': '-',   # en-dash →  hyphen
+        '\u2014': '-',   # em-dash →  hyphen
+        '\u2018': "'",   # left single quote
+        '\u2019': "'",   # right single quote
+        '\u201C': '"',   # left double quote
+        '\u201D': '"',   # right double quote
+        '\u2026': '...', # ellipsis
+        '\u20ac': 'EUR', # euro sign
+        '\u00b4': "'",   # acute accent
+        '\u2022': '-',   # bullet
+        '\u00ad': '-',   # soft hyphen
+        '\u200b': '',    # zero-width space
+        '\u00a0': ' ',   # non-breaking space
+    }
+    for char, repl in replacements.items():
+        text = text.replace(char, repl)
+    # Fallback: strip any remaining non-latin1 characters
+    return text.encode('latin-1', errors='replace').decode('latin-1')
+
+
 def _generate_document_pdf(form_data, doc_number):
     """Generate a PDF document matching the reference invoice layout.
     Returns PDF bytes on success, None on failure."""
@@ -4905,17 +4930,17 @@ def _generate_document_pdf(form_data, doc_number):
     pdf.set_y(45)
     pdf.set_font('Helvetica', '', 7)
     pdf.set_text_color(100, 100, 100)
-    sender_line = f"{biz['name']}  \u00b7  {biz['street']}  \u00b7  {biz['city']}"
-    pdf.cell(usable / 2, 4, sender_line, new_x='LMARGIN', new_y='NEXT')
+    sender_line = f"{biz['name']}  -  {biz['street']}  -  {biz['city']}"
+    pdf.cell(usable / 2, 4, _sanitize_for_pdf(sender_line), new_x='LMARGIN', new_y='NEXT')
 
     # ── Client block (left side) ──
     pdf.set_y(52)
     pdf.set_font('Helvetica', 'B', 11)
     pdf.set_text_color(0, 0, 0)
-    client_name = form_data.get('client_name', '')
+    client_name = _sanitize_for_pdf(form_data.get('client_name', ''))
     pdf.cell(usable / 2, 6, client_name, new_x='LMARGIN', new_y='NEXT')
     pdf.set_font('Helvetica', '', 10)
-    client_addr = form_data.get('client_address', '')
+    client_addr = _sanitize_for_pdf(form_data.get('client_address', ''))
     for line in client_addr.split(','):
         line = line.strip()
         if line:
@@ -4956,7 +4981,7 @@ def _generate_document_pdf(form_data, doc_number):
         pdf.cell(meta_w_label, 6, label, new_x='END')
         pdf.set_font('Helvetica', 'B', 10)
         pdf.set_text_color(0, 0, 0)
-        pdf.cell(meta_w_value, 6, str(value), align='R')
+        pdf.cell(meta_w_value, 6, _sanitize_for_pdf(str(value)), align='R')
         meta_y += 7
 
     # ── Document type heading ──
@@ -4971,7 +4996,7 @@ def _generate_document_pdf(form_data, doc_number):
     if project_title or client_name:
         pdf.set_font('Helvetica', 'B', 11)
         pdf.set_text_color(0, 0, 0)
-        subtitle = project_title if project_title else client_name
+        subtitle = _sanitize_for_pdf(project_title if project_title else client_name)
         pdf.cell(usable, 7, subtitle, new_x='LMARGIN', new_y='NEXT')
         pdf.ln(2)
 
@@ -4980,7 +5005,7 @@ def _generate_document_pdf(form_data, doc_number):
     if desc:
         pdf.set_font('Helvetica', '', 9)
         pdf.set_text_color(80, 80, 80)
-        pdf.multi_cell(usable, 4, desc, new_x='LMARGIN', new_y='NEXT')
+        pdf.multi_cell(usable, 4, _sanitize_for_pdf(desc), new_x='LMARGIN', new_y='NEXT')
         pdf.ln(4)
 
     # ── Line items table ──
@@ -5008,10 +5033,10 @@ def _generate_document_pdf(form_data, doc_number):
     pdf.set_font('Helvetica', '', 10)
     pdf.set_text_color(0, 0, 0)
     for idx, item in enumerate(line_items):
-        desc_text = item.get('desc', '')
+        desc_text = _sanitize_for_pdf(item.get('desc', ''))
         qty_val = _parse_eur_input(item.get('qty', '0'))
         price_val = _parse_eur_input(item.get('price', '0'))
-        unit_text = item.get('unit', 'pcs')
+        unit_text = _sanitize_for_pdf(item.get('unit', 'pcs'))
         line_total = qty_val * price_val
 
         row_data = [
@@ -5080,7 +5105,7 @@ def _generate_document_pdf(form_data, doc_number):
             pdf.ln(10)
             pdf.set_font('Helvetica', '', 9)
             pdf.set_text_color(80, 80, 80)
-            pdf.cell(usable, 5, f'Payment terms: {pt}', new_x='LMARGIN', new_y='NEXT')
+            pdf.cell(usable, 5, _sanitize_for_pdf(f'Payment terms: {pt}'), new_x='LMARGIN', new_y='NEXT')
 
     # ── Offer validity (offer only) ──
     if not is_invoice:

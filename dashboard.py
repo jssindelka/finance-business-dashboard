@@ -4338,35 +4338,5 @@ def main():
     """, unsafe_allow_html=True)
 
 
-def _check_password():
-    """Password gate for Streamlit Cloud. Returns True if authenticated."""
-    if 'app_password' not in st.secrets:
-        return True  # no password configured (local dev)
-    if st.session_state.get('authenticated'):
-        return True
-    st.markdown(f"""
-    <div style="display:flex;align-items:center;justify-content:center;min-height:60vh">
-        <div style="text-align:center;max-width:340px">
-            <div style="font-size:2.5rem;margin-bottom:1rem">💼</div>
-            <h2 style="color:{_t()["text"]};margin-bottom:0.5rem">Finance Dashboard</h2>
-            <p style="color:{_t()["muted"]};font-size:0.85rem;margin-bottom:1.5rem">
-                Enter password to continue</p>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    _, col, _ = st.columns([1, 1, 1])
-    with col:
-        pwd = st.text_input("Password", type="password", key="_login_pwd",
-                            label_visibility="collapsed", placeholder="Password")
-        if st.button("Log in", type="primary", use_container_width=True):
-            if pwd == st.secrets['app_password']:
-                st.session_state['authenticated'] = True
-                st.rerun()
-            else:
-                st.error("Incorrect password")
-    st.stop()
-
-
 if __name__ == '__main__':
-    _check_password()
     main()

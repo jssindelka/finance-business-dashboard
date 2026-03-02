@@ -5176,7 +5176,7 @@ def _generate_document_pdf(form_data, doc_number):
         pdf.set_xy(ml + col_w * 2, footer_y + 10.5)
         pdf.cell(col_w, 3.5, f'BIC: {biz["bic"]}')
 
-    return pdf.output()
+    return bytes(pdf.output())
 
 
 def _generate_and_process_pdf(form_data):

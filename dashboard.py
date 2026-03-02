@@ -313,9 +313,10 @@ def _get_drive_service():
     return build('drive', 'v3', credentials=_get_google_creds())
 
 
-@st.cache_resource(ttl=2400)
+@st.cache_resource(ttl=300)
 def _gsheet():
-    """Return the gspread Spreadsheet object (cached 40 min, same as client)."""
+    """Return the gspread Spreadsheet object (cached 5 min).
+    Kept shorter than client TTL to ensure fresh auth tokens on Cloud."""
     return _get_gspread_client().open_by_key(SHEET_ID)
 
 
@@ -1139,7 +1140,14 @@ def load_data():
     data = {}
 
     # 1. EXPENSES — clean tabular structure
-    ws_exp = sh.worksheet('Expenses')
+    # Retry once on APIError (stale cached auth token)
+    try:
+        ws_exp = sh.worksheet('Expenses')
+    except gspread.exceptions.APIError:
+        _gsheet.clear()
+        _get_gspread_client.clear()
+        sh = _gsheet()
+        ws_exp = sh.worksheet('Expenses')
     exp_records = ws_exp.get_all_records()
     expenses = pd.DataFrame(exp_records)
     expenses['Netto (€)'] = pd.to_numeric(

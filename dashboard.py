@@ -4620,6 +4620,141 @@ def _invalidate_documents_cache():
     _load_documents.clear()
 
 
+def _import_existing_invoices_to_documents():
+    """One-time import: sync existing invoices from Income sheet + Google Drive
+    into the Documents sheet so they appear in the Offers & Invoices view.
+    Only imports invoices not already present in Documents.
+    Returns number of imported records."""
+    try:
+        # Load what's already in the Documents sheet
+        existing_docs = _load_documents()
+        existing_numbers = {str(d.get('Number', '')) for d in existing_docs}
+
+        # Read Income sheet
+        sh = _gsheet()
+        ws_inc = sh.worksheet('Income')
+        inc_vals = ws_inc.get_all_values()
+        if not inc_vals:
+            return 0
+
+        inc_headers = inc_vals[0]
+        inc_df = pd.DataFrame(inc_vals[1:], columns=inc_headers)
+        if 'Date' in inc_df.columns:
+            inc_df['Date'] = pd.to_datetime(inc_df['Date'], dayfirst=True, errors='coerce')
+
+        paid_df = _parse_income_section(inc_df, 0)
+        unpaid_df = _parse_income_section(inc_df, 1)
+
+        # Load clients for ID lookup (name → client_id, address)
+        clients = _load_clients_from_sheet()
+        client_lookup = {}
+        for c in clients:
+            client_lookup[c['name'].strip().lower()] = c
+
+        # List Drive files in INVOICES folder for file ID matching
+        year_folder = _get_year_folder()
+        inv_folder_id = _drive_find_folder(year_folder, INVOICES_FOLDER) if year_folder else None
+        drive_files = {}
+        if inv_folder_id:
+            for f in _drive_list_files(inv_folder_id):
+                drive_files[f['name']] = f['id']
+
+        # Prepare Documents worksheet — collect all rows, then batch-append
+        ws_docs = _get_or_create_documents_sheet()
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        rows_to_add = []
+
+        for status_label, section_df in [('paid', paid_df), ('unpaid', unpaid_df)]:
+            if len(section_df) == 0 or 'Invoice Number' not in section_df.columns:
+                continue
+            for _, row in section_df.iterrows():
+                inv_num_raw = row.get('Invoice Number')
+                if pd.isna(inv_num_raw):
+                    continue
+                inv_num = str(int(inv_num_raw)) if isinstance(inv_num_raw, (int, float)) else str(inv_num_raw).strip()
+                if not inv_num or inv_num in existing_numbers:
+                    continue
+
+                # Build RE-prefixed doc number
+                doc_number = f'RE{inv_num}' if not inv_num.startswith('RE') else inv_num
+
+                # Already imported?
+                if doc_number in existing_numbers:
+                    continue
+
+                client_name = str(row.get('Client', ''))
+                project = str(row.get('Project', ''))
+                category = str(row.get('Category', ''))
+                date_val = row.get('Date')
+                date_str = date_val.strftime('%d.%m.%Y') if pd.notna(date_val) else ''
+                month_str = str(row.get('Month', ''))
+
+                netto = pd.to_numeric(_clean_currency(row.get('Netto (€)', 0)), errors='coerce')
+                brutto = pd.to_numeric(_clean_currency(row.get('Brutto (€)', 0)), errors='coerce')
+                if pd.isna(netto):
+                    netto = 0.0
+                if pd.isna(brutto):
+                    brutto = 0.0
+                ust = brutto - netto
+
+                # Client lookup
+                client_info = client_lookup.get(client_name.strip().lower(), {})
+                client_id = client_info.get('id', '')
+                client_address = client_info.get('address', '')
+
+                # Map status
+                doc_status = 'paid' if status_label == 'paid' else 'pending'
+
+                # Find Drive file
+                drive_file_id = ''
+                drive_filename = ''
+                for fname, fid in drive_files.items():
+                    _, normalized = _extract_invoice_id_from_filename(fname)
+                    if normalized == inv_num or fname.endswith(f'_{doc_number}.pdf') or fname.endswith(f'_{doc_number}.pdf'.replace('RE', '')):
+                        drive_file_id = fid
+                        drive_filename = fname
+                        break
+
+                doc_id = f"Rechnung_{doc_number}_{now_str.replace(' ', '_')}_{len(rows_to_add)}"
+
+                rows_to_add.append([
+                    doc_id,                   # ID
+                    'Rechnung',               # Type
+                    doc_number,               # Number
+                    date_str,                 # Date
+                    client_id,                # Client_ID
+                    client_name,              # Client_Name
+                    client_address,           # Client_Address
+                    project,                  # Project_Title
+                    '',                       # Project_Description
+                    category,                 # Category
+                    doc_status,               # Status
+                    '[]',                     # Line_Items_JSON (not available)
+                    f'{netto:.2f}',           # Netto
+                    f'{ust:.2f}',             # USt
+                    f'{brutto:.2f}',          # Brutto
+                    '',                       # Validity_Days
+                    month_str,                # Service_Date
+                    '',                       # Payment_Terms
+                    drive_file_id,            # Drive_File_ID
+                    drive_filename,           # Drive_Filename
+                    '',                       # Source_Offer_Number
+                    now_str,                  # Created_At
+                    now_str,                  # Updated_At
+                ])
+                existing_numbers.add(doc_number)
+                existing_numbers.add(inv_num)
+
+        # Single batch write instead of N individual append_row calls
+        if rows_to_add:
+            ws_docs.append_rows(rows_to_add, value_input_option='RAW')
+            _invalidate_documents_cache()
+        return len(rows_to_add)
+    except Exception as e:
+        st.warning(f"Could not import existing invoices: {e}")
+        return 0
+
+
 def _save_document_to_sheet(form_data, status='draft', doc_number=None):
     """Save a document (offer/invoice) to the Documents sheet.
     Returns the document number on success, None on failure."""
@@ -5519,8 +5654,14 @@ def tab_offers_invoices(data):
     st.markdown(f'<h1 style="font-size:24px;font-weight:700;letter-spacing:-0.3px;color:{t["text"]};margin-bottom:8px;font-family:{FONT}">Offers & Invoices</h1>', unsafe_allow_html=True)
     st.markdown(f'<p style="font-size:13px;color:{t["muted"]};margin-bottom:32px;font-family:{FONT}">Manage all your offers and invoices</p>', unsafe_allow_html=True)
 
-    # ── Load documents ──
+    # ── Load documents (auto-import existing invoices on first visit) ──
     docs = _load_documents()
+    if not docs and not st.session_state.get('_docs_import_attempted'):
+        with st.spinner('Importing existing invoices from Google Drive...'):
+            imported = _import_existing_invoices_to_documents()
+        st.session_state['_docs_import_attempted'] = True
+        if imported > 0:
+            docs = _load_documents()
 
     # ── Type toggle: All / Offers / Invoices ──
     if 'oi_type_filter' not in st.session_state:
@@ -6245,7 +6386,7 @@ def main():
     # ── Footer ──
     st.markdown(f"""
     <div class="js-footer">
-        JOSEF SINDELKA — FINANCE DASHBOARD 2026 — DATA AUTO-REFRESHES EVERY 30S
+        JOSEF SINDELKA — FINANCE DASHBOARD 2026 — DATA AUTO-REFRESHES EVERY 5 MIN
     </div>
     """, unsafe_allow_html=True)
 

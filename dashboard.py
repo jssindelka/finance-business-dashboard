@@ -5868,6 +5868,11 @@ def tab_offers_invoices(data):
                     st.session_state[f'{prefix}project_desc'] = sel_doc.get('Project_Description', '')
                     st.session_state[f'{prefix}category'] = sel_doc.get('Category', '')
                     st.session_state[f'{prefix}client_address'] = sel_doc.get('Client_Address', '')
+                    # Pre-select client in dropdown
+                    c_name = sel_doc.get('Client_Name', '')
+                    c_id = sel_doc.get('Client_ID', '')
+                    if c_name and c_id:
+                        st.session_state[f'{prefix}client_sel'] = f"{c_name} ({c_id})"
                     # Navigate
                     st.session_state['active_page'] = 'New Offer' if is_offer else 'New Invoice'
                     st.rerun()

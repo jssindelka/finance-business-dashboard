@@ -2412,7 +2412,8 @@ def _delete_offer_from_sheet(offer_number):
 _DOCMETA_COLS = ['Doc Number', 'Doc Type', 'Client', 'Client Address', 'Project',
                  'Category', 'Description', 'Date', 'Location', 'Event Date',
                  'Service Date', 'Invoice Type', 'Deposit Label', 'Project Total',
-                 'Validity', 'Netto', 'Brutto', 'Items JSON', 'Status', 'Created']
+                 'Validity', 'Netto', 'Brutto', 'Items JSON',
+                 'Payment Terms', 'Status', 'Created']
 
 
 def _get_docmeta_worksheet():
@@ -2457,11 +2458,12 @@ def _save_document_meta(doc_number, doc_type, meta):
             meta.get('deposit_label', ''), meta.get('project_total', ''),
             meta.get('validity', ''), meta.get('netto', 0),
             meta.get('brutto', 0), meta.get('items_json', '[]'),
+            meta.get('payment_terms', ''),
             meta.get('status', 'DRAFT'),
             datetime.now().strftime('%Y-%m-%d %H:%M'),
         ]
         if row_idx:
-            ws.update(f'A{row_idx}:T{row_idx}', [row_data],
+            ws.update(f'A{row_idx}:U{row_idx}', [row_data],
                       value_input_option='USER_ENTERED')
         else:
             ws.append_row(row_data, value_input_option='USER_ENTERED')
@@ -2492,6 +2494,49 @@ def _delete_document_meta(doc_number):
     except Exception:
         pass
     return False
+
+
+def _ensure_document_meta(doc):
+    """Ensure DocumentMeta exists for a document. Auto-create from sheet data if missing.
+
+    Args:
+        doc: dict from _build_doc_list() with keys: number, type, client, project,
+             category, date, netto, amount, status, source
+    Returns:
+        dict: The DocumentMeta record (existing or newly created)
+    """
+    import json as _json_ensure
+    meta = _get_document_meta(doc['number'])
+    if meta:
+        return meta
+    # Auto-create from available sheet data
+    meta_data = {
+        'client': doc.get('client', ''),
+        'client_address': '',
+        'project': doc.get('project', ''),
+        'category': doc.get('category', ''),
+        'description': '',
+        'date': doc.get('date', ''),
+        'location': '',
+        'event_date': '',
+        'service_date': '',
+        'invoice_type': '',
+        'deposit_label': '',
+        'project_total': 0,
+        'validity': 30 if doc.get('type') == 'Offer' else '',
+        'netto': doc.get('netto', 0),
+        'brutto': doc.get('amount', 0),
+        'items_json': _json_ensure.dumps([{
+            'pos': 1, 'description': doc.get('project', '') or 'Services',
+            'detail': '', 'qty': 1, 'unit': 'pcs',
+            'unit_price': float(doc.get('netto', 0)),
+            'total': float(doc.get('netto', 0))
+        }]),
+        'status': doc.get('status', 'DRAFT'),
+    }
+    _save_document_meta(doc['number'], doc.get('type', 'Invoice'), meta_data)
+    _load_document_meta.clear()
+    return _get_document_meta(doc['number'])
 
 
 # ---------- PDF Generator (fpdf2, Swiss-style) ----------
@@ -2789,7 +2834,8 @@ def _generate_document_pdf(doc_type, doc_data):
         pdf.set_font('Helvetica', '', 8.5)
         pdf.set_text_color(60, 60, 60)
         pdf.set_xy(ML, ty)
-        pdf.cell(content_w, 4, 'Zahlbar sofort, rein netto.')
+        payment_terms_text = doc_data.get('payment_terms', '') or 'Zahlbar sofort, rein netto.'
+        pdf.cell(content_w, 4, payment_terms_text)
 
     # ── Footer ──
     _draw_footer(pdf, W, H, ML, MR, BRAND_R, BRAND_G, BRAND_B)
@@ -2960,6 +3006,18 @@ def tab_invoices_offers(data):
                 'source': 'draft',
             })
 
+        # Deduplicate: if same number appears in both Income/Offers and DocumentMeta drafts, remove the draft
+        seen_numbers = set()
+        deduped = []
+        for doc in docs:
+            if doc['number'] in seen_numbers:
+                # Only skip if this is the draft source and we already have a non-draft source
+                if doc['source'] == 'draft':
+                    continue
+            seen_numbers.add(doc['number'])
+            deduped.append(doc)
+        docs = deduped
+
         return docs
 
     # ── Preview PDF dialog ─────────────────────────────────────
@@ -2987,8 +3045,14 @@ def tab_invoices_offers(data):
         t = _t()
         meta = _get_document_meta(doc_number)
         if not meta:
-            st.error(f"No metadata found for {doc_number}.")
-            return
+            # Auto-create metadata from sheet data for older documents
+            docs = _build_doc_list()
+            doc_match = next((d for d in docs if d['number'] == doc_number), None)
+            if doc_match:
+                meta = _ensure_document_meta(doc_match)
+            if not meta:
+                st.error(f"Could not load or create metadata for {doc_number}.")
+                return
         st.markdown(f"**Editing: {doc_number}** ({doc_type})")
 
         # Client section
@@ -3042,6 +3106,9 @@ def tab_invoices_offers(data):
                     edit_service_date = st.text_input("Service Date",
                         value=str(meta.get('Service Date', '')),
                         key=f'dlg_edit_sdate_{doc_number}')
+                    edit_payment_terms = st.text_input("Payment Terms",
+                        value=str(meta.get('Payment Terms', 'Zahlbar sofort, rein netto')),
+                        key=f'dlg_edit_payterms_{doc_number}')
 
         # Additional details
         with st.expander("Additional Details"):
@@ -3173,12 +3240,14 @@ def tab_invoices_offers(data):
                         updated_meta['invoice_type'] = 'deposit' if (doc_type == 'Invoice' and edit_is_deposit) else 'standard'
                         updated_meta['deposit_label'] = edit_deposit_label if (doc_type == 'Invoice' and edit_is_deposit) else ''
                         updated_meta['project_total'] = edit_project_total if (doc_type == 'Invoice' and edit_is_deposit) else 0
+                        updated_meta['payment_terms'] = edit_payment_terms if doc_type == 'Invoice' else ''
                         updated_meta['validity'] = ''
                     else:
                         updated_meta['service_date'] = ''
                         updated_meta['invoice_type'] = ''
                         updated_meta['deposit_label'] = ''
                         updated_meta['project_total'] = 0
+                        updated_meta['payment_terms'] = ''
                         updated_meta['validity'] = edit_validity if doc_type == 'Offer' else 30
 
                     # 1. Save DocumentMeta
@@ -3216,6 +3285,7 @@ def tab_invoices_offers(data):
                                     'location': updated_meta.get('location', ''),
                                     'event_date': updated_meta.get('event_date', ''),
                                     'service_date': updated_meta.get('service_date', ''),
+                                    'payment_terms': updated_meta.get('payment_terms', ''),
                                     'items': edit_line_items, 'subtotal': edit_subtotal,
                                     'vat': edit_vat, 'total': edit_total,
                                     'invoice_type': updated_meta['invoice_type'],
@@ -3371,6 +3441,70 @@ def tab_invoices_offers(data):
                 elif current_status == 'PAID' and new_status == 'SENT':
                     update_invoice_status_in_excel(inv_num_raw, 'unpaid')
                     _invalidate_data_caches()
+                # Drive sync for invoices on status transitions
+                if new_status in ('SENT', 'PAID') and current_status == 'DRAFT':
+                    # DRAFT -> SENT/PAID: generate PDF + upload to Drive
+                    meta = _get_document_meta(doc_number)
+                    if meta:
+                        try:
+                            import json as _json_inv_sync
+                            items = _json_inv_sync.loads(str(meta.get('Items JSON', '[]')))
+                            subtotal = sum(float(it.get('total', 0) or (float(it.get('qty', 0)) * float(it.get('unit_price', 0)))) for it in items)
+                            vat_amt = round(subtotal * VAT_RATE, 2)
+                            total_amt = round(subtotal + vat_amt, 2)
+                            date_str = str(meta.get('Date', ''))
+                            try:
+                                date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+                                date_fmt = date_obj.strftime('%d.%m.%Y')
+                            except Exception:
+                                date_obj = datetime.today()
+                                date_fmt = date_obj.strftime('%d.%m.%Y')
+                            doc_data = {
+                                'number': doc_number, 'date': date_str,
+                                'date_formatted': date_fmt,
+                                'client_name': meta.get('Client', ''),
+                                'client_address': meta.get('Client Address', ''),
+                                'client_id': '', 'title': meta.get('Project', ''),
+                                'description': meta.get('Description', ''),
+                                'location': meta.get('Location', ''),
+                                'event_date': meta.get('Event Date', ''),
+                                'service_date': meta.get('Service Date', ''),
+                                'payment_terms': meta.get('Payment Terms', ''),
+                                'items': items, 'subtotal': subtotal,
+                                'vat': vat_amt, 'total': total_amt,
+                                'invoice_type': meta.get('Invoice Type', 'standard'),
+                                'deposit_label': meta.get('Deposit Label', ''),
+                                'project_total': float(meta.get('Project Total', 0) or 0),
+                            }
+                            pdf_bytes = _generate_document_pdf('invoice', doc_data)
+                            prefix = '' if new_status == 'PAID' else 'notpaid_'
+                            filename = f"{prefix}Rechnung_JosefSindelka_{doc_number}.pdf"
+                            folder_id = _get_invoices_folder_id()
+                            if folder_id:
+                                _drive_upload_bytes(folder_id, filename, pdf_bytes)
+                                st.toast(f"PDF uploaded to {INVOICES_FOLDER}/")
+                        except Exception as e:
+                            st.warning(f"Could not generate/upload invoice PDF: {e}")
+
+                elif new_status == 'PAID' and current_status == 'SENT':
+                    # SENT -> PAID: rename file (remove notpaid_ prefix)
+                    try:
+                        folder_id = _get_invoices_folder_id()
+                        if folder_id:
+                            inv_key = doc_number.replace('RE', '')
+                            files = _drive_list_files(folder_id)
+                            for f in files:
+                                if inv_key in f['name'] and f['name'].startswith('notpaid_') and f['name'].endswith('.pdf'):
+                                    new_name = f['name'].replace('notpaid_', '', 1)
+                                    creds = _get_google_creds()
+                                    from googleapiclient.discovery import build as _build_drive
+                                    svc = _build_drive('drive', 'v3', credentials=creds)
+                                    svc.files().update(fileId=f['id'], body={'name': new_name}).execute()
+                                    st.toast(f"PDF renamed: {new_name}")
+                                    break
+                    except Exception:
+                        pass  # Non-critical
+
                 _log_activity('INVOICE_STATUS', f"{doc_number} -> {new_status}")
             # Update DocumentMeta status too
             meta_existing = _get_document_meta(doc_number)
@@ -3399,6 +3533,18 @@ def tab_invoices_offers(data):
             if st.button("Delete", type="primary", use_container_width=True, key=f'dlg_del_ok_{doc_number}'):
                 if doc_type == 'Offer':
                     _delete_offer_from_sheet(doc_number)
+                    # Ensure Drive PDF is also cleaned up
+                    try:
+                        folder_id = _get_offers_folder_id()
+                        if folder_id:
+                            files = _drive_list_files(folder_id)
+                            search_key = doc_number.replace('AG', '')
+                            for f in files:
+                                if search_key in f['name'] and f['name'].endswith('.pdf'):
+                                    _drive_delete_file(f['id'])
+                                    break
+                    except Exception:
+                        pass  # OK if no PDF existed (was draft)
                     _log_activity('OFFER_DELETED', doc_number)
                 else:
                     inv_num_raw = doc_number.replace('RE', '')
@@ -3824,6 +3970,9 @@ def tab_invoices_offers(data):
                 inv_service_date = st.text_input("Service Date", placeholder="e.g. February 2026",
                                                   value=str(edit_inv.get('Service Date', '')) if edit_inv else '',
                                                   key='inv_service_date')
+            inv_payment_terms = st.text_input("Payment Terms",
+                value="Zahlbar sofort, rein netto",
+                key='inv_payment_terms')
 
         # Expander: Additional Details
         with st.expander("Additional Details", expanded=bool(edit_inv)):
@@ -3974,6 +4123,7 @@ def tab_invoices_offers(data):
                     'client_id': '', 'title': inv_title,
                     'description': inv_description, 'location': inv_location,
                     'event_date': inv_event_date, 'service_date': inv_service_date,
+                    'payment_terms': inv_payment_terms,
                     'items': line_items, 'subtotal': subtotal,
                     'vat': vat, 'total': total,
                     'invoice_type': 'deposit' if is_deposit else 'standard',
@@ -4008,6 +4158,7 @@ def tab_invoices_offers(data):
                         'location': inv_location,
                         'event_date': inv_event_date,
                         'service_date': inv_service_date,
+                        'payment_terms': inv_payment_terms,
                         'items': line_items,
                         'subtotal': subtotal,
                         'vat': vat,
@@ -4061,6 +4212,7 @@ def tab_invoices_offers(data):
                         'invoice_type': 'deposit' if is_deposit else 'standard',
                         'deposit_label': deposit_label if is_deposit else '',
                         'project_total': project_total if is_deposit else 0,
+                        'payment_terms': inv_payment_terms,
                         'validity': '', 'netto': subtotal, 'brutto': total,
                         'items_json': _json.dumps(line_items), 'status': 'SENT',
                     })
@@ -4090,6 +4242,7 @@ def tab_invoices_offers(data):
                     'invoice_type': 'deposit' if is_deposit else 'standard',
                     'deposit_label': deposit_label if is_deposit else '',
                     'project_total': project_total if is_deposit else 0,
+                    'payment_terms': inv_payment_terms,
                     'validity': '', 'netto': subtotal, 'brutto': total,
                     'items_json': _json.dumps(line_items), 'status': 'DRAFT',
                 })

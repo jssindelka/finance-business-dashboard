@@ -1936,7 +1936,7 @@ def _get_counters_worksheet():
         ws = ss.add_worksheet(title='Counters', rows=5, cols=2)
         ws.update('A1:B4', [
             ['Counter', 'Value'],
-            ['offer', '28'],
+            ['offer', '27'],
             ['invoice', '53'],
             ['client', '23'],
         ])
@@ -2000,7 +2000,7 @@ def _get_counter(name):
                 return int(r.get('Value', 0))
     except Exception:
         pass
-    defaults = {'offer': 28, 'invoice': 53, 'client': 23}
+    defaults = {'offer': 27, 'invoice': 53, 'client': 23}
     return defaults.get(name, 0)
 
 
@@ -2016,18 +2016,18 @@ def _increment_counter(name):
                 return new_val
     except Exception:
         pass
-    defaults = {'offer': 28, 'invoice': 53, 'client': 23}
+    defaults = {'offer': 27, 'invoice': 53, 'client': 23}
     return defaults.get(name, 0) + 1
 
 
 def _next_offer_number():
     n = _increment_counter('offer')
-    return f"AG-{CURRENT_YEAR}{str(n).zfill(3)}"
+    return f"AG{CURRENT_YEAR}{str(n).zfill(3)}"
 
 
 def _next_invoice_number():
     n = _increment_counter('invoice')
-    return f"RE-{CURRENT_YEAR}{str(n).zfill(3)}"
+    return f"RE{CURRENT_YEAR}{str(n).zfill(3)}"
 
 
 def _next_client_id():
@@ -2621,8 +2621,8 @@ def tab_invoices_offers(data):
 
                     # Add to Income sheet (unpaid)
                     try:
-                        # Extract numeric part for sheet (e.g., RE-2026054 → 2026054)
-                        sheet_inv_num = inv_number.replace('RE-', '')
+                        # Extract numeric part for sheet (e.g., RE2026054 → 2026054)
+                        sheet_inv_num = inv_number.replace('RE', '')
                         inv_data_for_sheet = {
                             'id': '',
                             'invoice_number': int(sheet_inv_num) if sheet_inv_num.isdigit() else sheet_inv_num,

@@ -449,10 +449,11 @@ def _inject_css():
         background: {t['surface2']};
     }}
     .stTabs [aria-selected="true"] {{
-        background: {C_ORANGE} !important;
+        background: linear-gradient(135deg, {C_ORANGE} 0%, {C_ORANGE_LIGHT} 100%) !important;
         border-color: transparent !important;
         color: #fff !important;
         font-weight: 600;
+        box-shadow: 0 2px 8px rgba(232,93,38,0.25), inset 0 1px 0 rgba(255,255,255,0.15);
     }}
     .stTabs [data-baseweb="tab-highlight"] {{
         display: none;
@@ -680,7 +681,64 @@ def _inject_css():
         font-weight: 500;
     }}
 
-    /* ── Override Streamlit defaults ── */
+    /* ── Widget Labels & Text Visibility ── */
+    .stSelectbox label,
+    .stTextInput label,
+    .stNumberInput label,
+    .stDateInput label,
+    .stTextArea label,
+    .stRadio label,
+    .stCheckbox label,
+    .stFileUploader label,
+    .stMultiSelect label,
+    .stSlider label,
+    .stColorPicker label {{
+        color: {t['text']} !important;
+        font-family: {FONT};
+        font-weight: 500;
+        font-size: 0.82rem;
+    }}
+    .stSelectbox label p,
+    .stTextInput label p,
+    .stNumberInput label p,
+    .stDateInput label p,
+    .stTextArea label p,
+    .stFileUploader label p {{
+        color: {t['text']} !important;
+    }}
+
+    /* Streamlit markdown text */
+    .stMarkdown, .stMarkdown p {{
+        color: {t['text']};
+        font-family: {FONT};
+    }}
+    .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4 {{
+        color: {t['text']} !important;
+        font-family: {FONT};
+    }}
+
+    /* Streamlit headings / subheaders */
+    [data-testid="stHeading"] {{
+        color: {t['text']} !important;
+    }}
+    [data-testid="stHeading"] h1,
+    [data-testid="stHeading"] h2,
+    [data-testid="stHeading"] h3 {{
+        color: {t['text']} !important;
+        font-family: {FONT};
+    }}
+
+    /* Streamlit caption / help text */
+    .stCaption, .stCaption p {{
+        color: {t['text_secondary']} !important;
+    }}
+
+    /* Tab content text */
+    .stTabs [data-baseweb="tab-panel"] {{
+        color: {t['text']};
+    }}
+
+    /* Override Streamlit defaults */
     #MainMenu {{visibility: hidden;}}
     header[data-testid="stHeader"] {{background: {t['bg']}; }}
     .stDeployButton, .stAppDeployButton {{display: none;}}
@@ -715,14 +773,17 @@ def _inject_css():
         border-color: {t['border_hover']};
     }}
     .stButton > button[kind="primary"] {{
-        background: {C_ORANGE};
-        border: 1px solid transparent;
+        background: linear-gradient(135deg, {C_ORANGE} 0%, {C_ORANGE_LIGHT} 100%);
+        border: 1px solid rgba(255,255,255,0.18);
         color: #fff;
         font-weight: 600;
+        box-shadow: 0 2px 8px rgba(232,93,38,0.25), inset 0 1px 0 rgba(255,255,255,0.2);
+        backdrop-filter: blur(4px);
     }}
     .stButton > button[kind="primary"]:hover {{
-        background: {C_ORANGE_LIGHT};
-        border-color: transparent;
+        background: linear-gradient(135deg, {C_ORANGE_LIGHT} 0%, {C_ORANGE} 100%);
+        border-color: rgba(255,255,255,0.25);
+        box-shadow: 0 4px 14px rgba(232,93,38,0.35), inset 0 1px 0 rgba(255,255,255,0.25);
     }}
 
     /* ── Transaction rows ── */
@@ -4912,7 +4973,7 @@ def main():
     date_str = f"({today.strftime('%d.%m.%y')})"
     t = _t()
 
-    h1, h2, h3, h4 = st.columns([5, 1.2, 1.2, 0.5])
+    h1, h2, h3, h4 = st.columns([4, 1.5, 1.5, 0.6])
     with h1:
         st.markdown(f"""
         <div style="text-align:left;padding-top:0.6rem">

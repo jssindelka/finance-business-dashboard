@@ -574,6 +574,46 @@ def _inject_css():
         letter-spacing: 0.03em;
         font-family: {FONT};
     }}
+    .badge-paid {{ color: {C_GREEN}; background: rgba(34,197,94,0.12); }}
+    .badge-sent {{ color: {C_ORANGE}; background: rgba(232,93,38,0.12); }}
+    .badge-draft {{ color: {t['muted']}; background: {t['surface3']}; }}
+
+    /* ── Filter Pills (horizontal radio in dashboard) ── */
+    .doc-filter .stRadio > div {{
+        gap: 0.4rem;
+        flex-wrap: wrap;
+    }}
+    .doc-filter .stRadio > div > label {{
+        background: {t['surface']};
+        border: 1px solid {t['border']};
+        border-radius: 20px;
+        padding: 0.35rem 1rem;
+        font-size: 0.72rem;
+        font-weight: 500;
+        font-family: {FONT};
+        color: {t['text_secondary']};
+        transition: all 0.2s ease;
+        cursor: pointer;
+    }}
+    .doc-filter .stRadio > div > label:hover {{
+        border-color: {t['border_hover']};
+        color: {t['text']};
+    }}
+    .doc-filter .stRadio > div > label[data-checked="true"],
+    .doc-filter .stRadio > div > label:has(input:checked) {{
+        background: {t['text']};
+        color: {t['surface']};
+        border-color: {t['text']};
+    }}
+    .doc-filter .stRadio > div > label > div:first-child {{
+        display: none;  /* hide default radio circle */
+    }}
+
+    /* ── Container borders (form cards) ── */
+    [data-testid="stVerticalBlockBorderWrapper"] {{
+        border-radius: 16px !important;
+        border-color: {t['border']} !important;
+    }}
 
     /* ── Progress Bar ── */
     .progress-bar-bg {{
@@ -936,6 +976,8 @@ def _invalidate_data_caches():
     Preserves long-lived caches like _drive_find_folder and get_exchange_rate."""
     load_data.clear()
     _auto_scan_changes.clear()
+    _load_offers.clear()
+    _load_document_meta.clear()
 
 @st.cache_data(ttl=30)
 def load_data():
@@ -2205,6 +2247,186 @@ def _get_or_create_client(name, address='', notes='', country=''):
     return new_client
 
 
+# ---------- Offers Sheet CRUD ----------
+
+_OFFERS_COLS = ['Offer Number', 'Date', 'Client', 'Project', 'Category',
+                'Netto', 'Brutto', 'Validity', 'Valid Until', 'Status',
+                'Items JSON', 'Created']
+
+
+def _get_offers_worksheet():
+    """Get or create the 'Offers' worksheet."""
+    ss = _gsheet()
+    try:
+        return ss.worksheet('Offers')
+    except gspread.exceptions.WorksheetNotFound:
+        ws = ss.add_worksheet(title='Offers', rows=200, cols=len(_OFFERS_COLS))
+        ws.update(f'A1:{chr(64+len(_OFFERS_COLS))}1', [_OFFERS_COLS])
+        return ws
+
+
+@st.cache_data(ttl=300)
+def _load_offers():
+    """Load all offers from the Offers worksheet. Returns list of dicts."""
+    try:
+        ws = _get_offers_worksheet()
+        rows = ws.get_all_records()
+        return rows if rows else []
+    except Exception:
+        return []
+
+
+def _save_offer_to_sheet(offer_data):
+    """Append a new offer row to the Offers worksheet."""
+    try:
+        ws = _get_offers_worksheet()
+        ws.append_row([
+            offer_data.get('offer_number', ''),
+            offer_data.get('date', ''),
+            offer_data.get('client', ''),
+            offer_data.get('project', ''),
+            offer_data.get('category', ''),
+            offer_data.get('netto', 0),
+            offer_data.get('brutto', 0),
+            offer_data.get('validity', 30),
+            offer_data.get('valid_until', ''),
+            offer_data.get('status', 'SENT'),
+            offer_data.get('items_json', '[]'),
+            datetime.now().strftime('%Y-%m-%d %H:%M'),
+        ], value_input_option='USER_ENTERED')
+        _load_offers.clear()
+    except Exception as e:
+        st.error(f"Could not save offer: {e}")
+
+
+def _update_offer_status(offer_number, new_status):
+    """Update the status of an offer in the Offers worksheet."""
+    try:
+        ws = _get_offers_worksheet()
+        col_a = ws.col_values(1)  # Offer Number column
+        for i, val in enumerate(col_a[1:], start=2):
+            if str(val).strip() == str(offer_number).strip():
+                ws.update_cell(i, 10, new_status)  # Column J = Status
+                _load_offers.clear()
+                return True
+    except Exception as e:
+        st.error(f"Could not update offer status: {e}")
+    return False
+
+
+def _delete_offer_from_sheet(offer_number):
+    """Delete an offer row from the sheet and its PDF from Drive."""
+    try:
+        ws = _get_offers_worksheet()
+        col_a = ws.col_values(1)
+        for i, val in enumerate(col_a[1:], start=2):
+            if str(val).strip() == str(offer_number).strip():
+                ws.delete_rows(i)
+                _load_offers.clear()
+                break
+    except Exception:
+        pass
+    # Delete PDF from Drive
+    try:
+        folder_id = _get_offers_folder_id()
+        if folder_id:
+            search_key = str(offer_number).replace('AG', '')
+            files = _drive_list_files(folder_id)
+            for f in files:
+                if search_key in f['name'] and f['name'].endswith('.pdf'):
+                    _drive_delete_file(f['id'])
+                    break
+    except Exception:
+        pass
+
+
+# ---------- DocumentMeta Sheet (for Drafts + Edit) ----------
+
+_DOCMETA_COLS = ['Doc Number', 'Doc Type', 'Client', 'Client Address', 'Project',
+                 'Category', 'Description', 'Date', 'Location', 'Event Date',
+                 'Service Date', 'Invoice Type', 'Deposit Label', 'Project Total',
+                 'Validity', 'Netto', 'Brutto', 'Items JSON', 'Status', 'Created']
+
+
+def _get_docmeta_worksheet():
+    """Get or create the 'DocumentMeta' worksheet."""
+    ss = _gsheet()
+    try:
+        return ss.worksheet('DocumentMeta')
+    except gspread.exceptions.WorksheetNotFound:
+        ws = ss.add_worksheet(title='DocumentMeta', rows=200, cols=len(_DOCMETA_COLS))
+        ws.update(f'A1:{chr(64+len(_DOCMETA_COLS))}1', [_DOCMETA_COLS])
+        return ws
+
+
+@st.cache_data(ttl=300)
+def _load_document_meta():
+    """Load all document metadata. Returns list of dicts."""
+    try:
+        ws = _get_docmeta_worksheet()
+        rows = ws.get_all_records()
+        return rows if rows else []
+    except Exception:
+        return []
+
+
+def _save_document_meta(doc_number, doc_type, meta):
+    """Save or update document metadata (upsert by doc number)."""
+    try:
+        ws = _get_docmeta_worksheet()
+        col_a = ws.col_values(1)  # Doc Number
+        row_idx = None
+        for i, val in enumerate(col_a[1:], start=2):
+            if str(val).strip() == str(doc_number).strip():
+                row_idx = i
+                break
+        row_data = [
+            doc_number, doc_type,
+            meta.get('client', ''), meta.get('client_address', ''),
+            meta.get('project', ''), meta.get('category', ''),
+            meta.get('description', ''), meta.get('date', ''),
+            meta.get('location', ''), meta.get('event_date', ''),
+            meta.get('service_date', ''), meta.get('invoice_type', ''),
+            meta.get('deposit_label', ''), meta.get('project_total', ''),
+            meta.get('validity', ''), meta.get('netto', 0),
+            meta.get('brutto', 0), meta.get('items_json', '[]'),
+            meta.get('status', 'DRAFT'),
+            datetime.now().strftime('%Y-%m-%d %H:%M'),
+        ]
+        if row_idx:
+            ws.update(f'A{row_idx}:T{row_idx}', [row_data],
+                      value_input_option='USER_ENTERED')
+        else:
+            ws.append_row(row_data, value_input_option='USER_ENTERED')
+        _load_document_meta.clear()
+    except Exception as e:
+        st.error(f"Could not save document meta: {e}")
+
+
+def _get_document_meta(doc_number):
+    """Get metadata for a single document by its number."""
+    metas = _load_document_meta()
+    for m in metas:
+        if str(m.get('Doc Number', '')).strip() == str(doc_number).strip():
+            return m
+    return None
+
+
+def _delete_document_meta(doc_number):
+    """Delete a document metadata row."""
+    try:
+        ws = _get_docmeta_worksheet()
+        col_a = ws.col_values(1)
+        for i, val in enumerate(col_a[1:], start=2):
+            if str(val).strip() == str(doc_number).strip():
+                ws.delete_rows(i)
+                _load_document_meta.clear()
+                return True
+    except Exception:
+        pass
+    return False
+
+
 # ---------- PDF Generator (fpdf2, Swiss-style) ----------
 
 def _fmt_eur_de(num):
@@ -2570,104 +2792,501 @@ def _get_offers_folder_id():
 # ---------- Tab: Invoices / Offers ----------
 
 def tab_invoices_offers(data):
-    """Invoice & Offer Generator tab."""
+    """Invoice & Offer Generator tab with Dashboard, New Invoice, New Offer, and Clients sub-tabs."""
+    import json as _json
 
     # Ensure clients are seeded
     clients = _seed_clients_if_empty()
     if not clients:
         clients = _load_clients_db()
 
-    # Sub-tabs inside this tab
-    sub1, sub2, sub3 = st.tabs(['📄 NEW INVOICE', '📋 NEW OFFER', '👤 CLIENTS'])
+    # ── Helper: build unified document list ──────────────────────
+    def _build_doc_list():
+        """Merge paid invoices, unpaid invoices, offers, and drafts into a
+        single list of dicts with keys: number, type, client, project, amount,
+        date, status, source.  source = 'income_paid' | 'income_unpaid' |
+        'offer' | 'draft'."""
+        docs = []
+
+        # -- paid invoices from Income sheet
+        paid = data.get('income_paid')
+        if paid is not None and not paid.empty:
+            for _, r in paid.iterrows():
+                inv_num = str(r.get('Invoice Number', '')).strip()
+                if not inv_num:
+                    continue
+                docs.append({
+                    'number': f"RE{inv_num}" if not str(inv_num).startswith('RE') else inv_num,
+                    'type': 'Invoice',
+                    'client': str(r.get('Client', '')),
+                    'project': str(r.get('Project', '')),
+                    'amount': float(r.get('Brutto (€)', 0) or 0),
+                    'netto': float(r.get('Netto (€)', 0) or 0),
+                    'date': str(r.get('Date', '')),
+                    'status': 'PAID',
+                    'category': str(r.get('Category', '')),
+                    'source': 'income_paid',
+                })
+
+        # -- unpaid invoices from Income sheet
+        unpaid = data.get('income_unpaid')
+        if unpaid is not None and not unpaid.empty:
+            for _, r in unpaid.iterrows():
+                inv_num = str(r.get('Invoice Number', '')).strip()
+                if not inv_num:
+                    continue
+                docs.append({
+                    'number': f"RE{inv_num}" if not str(inv_num).startswith('RE') else inv_num,
+                    'type': 'Invoice',
+                    'client': str(r.get('Client', '')),
+                    'project': str(r.get('Project', '')),
+                    'amount': float(r.get('Brutto (€)', 0) or 0),
+                    'netto': float(r.get('Netto (€)', 0) or 0),
+                    'date': str(r.get('Date', '')),
+                    'status': 'SENT',
+                    'category': str(r.get('Category', '')),
+                    'source': 'income_unpaid',
+                })
+
+        # -- offers
+        offers = _load_offers()
+        seen_numbers = {d['number'] for d in docs}
+        for o in offers:
+            onum = str(o.get('Offer Number', '')).strip()
+            if not onum:
+                continue
+            docs.append({
+                'number': onum,
+                'type': 'Offer',
+                'client': str(o.get('Client', '')),
+                'project': str(o.get('Project', '')),
+                'amount': float(o.get('Brutto', 0) or 0),
+                'netto': float(o.get('Netto', 0) or 0),
+                'date': str(o.get('Date', '')),
+                'status': str(o.get('Status', 'SENT')).upper(),
+                'category': str(o.get('Category', '')),
+                'source': 'offer',
+            })
+            seen_numbers.add(onum)
+
+        # -- drafts from DocumentMeta (only add if not already present)
+        metas = _load_document_meta()
+        for m in metas:
+            dnum = str(m.get('Doc Number', '')).strip()
+            if not dnum or dnum in seen_numbers:
+                continue
+            dtype = str(m.get('Doc Type', 'Invoice'))
+            docs.append({
+                'number': dnum,
+                'type': dtype,
+                'client': str(m.get('Client', '')),
+                'project': str(m.get('Project', '')),
+                'amount': float(m.get('Brutto', 0) or 0),
+                'netto': float(m.get('Netto', 0) or 0),
+                'date': str(m.get('Date', '')),
+                'status': str(m.get('Status', 'DRAFT')).upper(),
+                'category': str(m.get('Category', '')),
+                'source': 'draft',
+            })
+
+        return docs
+
+    # ── Status-change dialog ─────────────────────────────────────
+    @st.dialog("Change Document Status")
+    def _dlg_change_status(doc_number, doc_type, current_status):
+        t = _t()
+        st.markdown(f"**Document:** {doc_number}")
+        st.markdown(f"**Current status:** {current_status}")
+        if doc_type == 'Offer':
+            options = ['DRAFT', 'SENT', 'ACCEPTED', 'DECLINED', 'EXPIRED']
+        else:
+            options = ['DRAFT', 'SENT', 'PAID']
+        new_status = st.selectbox("New Status", options, key=f'dlg_status_{doc_number}')
+        if st.button("Update", type="primary", key=f'dlg_status_ok_{doc_number}'):
+            if doc_type == 'Offer':
+                _update_offer_status(doc_number, new_status)
+                _log_activity('OFFER_STATUS', f"{doc_number} -> {new_status}")
+            else:
+                inv_num_raw = doc_number.replace('RE', '')
+                if current_status == 'DRAFT' and new_status in ('SENT', 'PAID'):
+                    # Draft becoming real invoice — add to Income sheet
+                    meta = _get_document_meta(doc_number)
+                    if meta:
+                        inv_data_for_sheet = {
+                            'id': '',
+                            'invoice_number': int(inv_num_raw) if inv_num_raw.isdigit() else inv_num_raw,
+                            'date': datetime.strptime(str(meta.get('Date', '')), '%Y-%m-%d') if meta.get('Date') else datetime.today(),
+                            'month': MONTHS[datetime.today().month - 1],
+                            'client': meta.get('Client', ''),
+                            'project': meta.get('Project', ''),
+                            'category': meta.get('Category', INCOME_CATEGORIES[0]),
+                            'netto': float(meta.get('Netto', 0) or 0),
+                            'brutto': float(meta.get('Brutto', 0) or 0),
+                        }
+                        target_status = 'paid' if new_status == 'PAID' else 'unpaid'
+                        add_invoice_to_excel(inv_data_for_sheet, status=target_status)
+                        _invalidate_data_caches()
+                elif current_status == 'SENT' and new_status == 'PAID':
+                    update_invoice_status_in_excel(inv_num_raw, 'paid')
+                    _invalidate_data_caches()
+                elif current_status == 'PAID' and new_status == 'SENT':
+                    update_invoice_status_in_excel(inv_num_raw, 'unpaid')
+                    _invalidate_data_caches()
+                _log_activity('INVOICE_STATUS', f"{doc_number} -> {new_status}")
+            # Update DocumentMeta status too
+            meta_existing = _get_document_meta(doc_number)
+            if meta_existing:
+                _save_document_meta(doc_number, doc_type, {
+                    **{k.lower().replace(' ', '_'): v for k, v in meta_existing.items()},
+                    'status': new_status,
+                })
+            st.success(f"Status updated to **{new_status}**.")
+            st.rerun()
+
+    # ── Delete-document dialog ───────────────────────────────────
+    @st.dialog("Delete Document")
+    def _dlg_delete_doc(doc_number, doc_type, source):
+        t = _t()
+        st.warning(f"Are you sure you want to delete **{doc_number}**? This cannot be undone.")
+        bc1, bc2 = st.columns(2)
+        with bc1:
+            if st.button("Cancel", use_container_width=True, key=f'dlg_del_cancel_{doc_number}'):
+                st.rerun()
+        with bc2:
+            if st.button("Delete", type="primary", use_container_width=True, key=f'dlg_del_ok_{doc_number}'):
+                if doc_type == 'Offer':
+                    _delete_offer_from_sheet(doc_number)
+                    _log_activity('OFFER_DELETED', doc_number)
+                else:
+                    inv_num_raw = doc_number.replace('RE', '')
+                    if source != 'draft':
+                        remove_invoice_from_excel(inv_num_raw)
+                        _delete_invoice_pdf(inv_num_raw)
+                    _log_activity('INVOICE_DELETED', doc_number)
+                # Always clean up DocumentMeta
+                _delete_document_meta(doc_number)
+                _invalidate_data_caches()
+                st.success(f"**{doc_number}** deleted.")
+                st.rerun()
+
+    # ── Sub-tabs ─────────────────────────────────────────────────
+    sub0, sub1, sub2, sub3 = st.tabs([
+        'DASHBOARD', 'NEW INVOICE', 'NEW OFFER', 'CLIENTS'
+    ])
+
+    # ────────────────────────────────────────────────────────────
+    # SUB-TAB 0: DASHBOARD
+    # ────────────────────────────────────────────────────────────
+    with sub0:
+        t = _t()
+        all_docs = _build_doc_list()
+
+        # KPI calculations
+        total_offers = sum(1 for d in all_docs if d['type'] == 'Offer')
+        total_invoices = sum(1 for d in all_docs if d['type'] == 'Invoice')
+        revenue_paid = sum(d['amount'] for d in all_docs if d['type'] == 'Invoice' and d['status'] == 'PAID')
+        pending_amount = sum(d['amount'] for d in all_docs if d['status'] in ('SENT', 'DRAFT'))
+
+        k1, k2, k3, k4 = st.columns(4)
+        with k1:
+            metric_card("Total Offers", total_offers)
+        with k2:
+            metric_card("Total Invoices", total_invoices)
+        with k3:
+            metric_card("Revenue (Paid)", revenue_paid, color_class='green')
+        with k4:
+            metric_card("Pending", pending_amount, color_class='orange')
+
+        st.markdown("")
+
+        # ── Recent Documents heading + filter ──
+        _text_c = t['text']
+        st.markdown(f"<h4 style='color:{_text_c};font-family:{FONT};margin-bottom:0.2rem'>Recent Documents</h4>",
+                    unsafe_allow_html=True)
+
+        filter_val = st.radio("Filter", ['All', 'Offers', 'Invoices', 'Draft', 'Sent', 'Paid'],
+                              horizontal=True, key='dash_filter', label_visibility='collapsed')
+
+        # Apply filter
+        if filter_val == 'All':
+            filtered = all_docs
+        elif filter_val == 'Offers':
+            filtered = [d for d in all_docs if d['type'] == 'Offer']
+        elif filter_val == 'Invoices':
+            filtered = [d for d in all_docs if d['type'] == 'Invoice']
+        elif filter_val == 'Draft':
+            filtered = [d for d in all_docs if d['status'] == 'DRAFT']
+        elif filter_val == 'Sent':
+            filtered = [d for d in all_docs if d['status'] == 'SENT']
+        elif filter_val == 'Paid':
+            filtered = [d for d in all_docs if d['status'] == 'PAID']
+        else:
+            filtered = all_docs
+
+        # Sort by date descending (most recent first)
+        def _sort_key(d):
+            try:
+                return datetime.strptime(d['date'], '%Y-%m-%d')
+            except Exception:
+                try:
+                    return datetime.strptime(d['date'], '%d.%m.%Y')
+                except Exception:
+                    return datetime(2000, 1, 1)
+        filtered.sort(key=_sort_key, reverse=True)
+
+        if not filtered:
+            st.info("No documents match the selected filter.")
+        else:
+            # Status badge colors
+            _status_colors = {
+                'PAID': C_GREEN,
+                'SENT': C_BLUE,
+                'DRAFT': _t()['muted'],
+                'ACCEPTED': C_GREEN,
+                'DECLINED': C_RED,
+                'EXPIRED': C_RED,
+            }
+
+            # Build HTML table header
+            table_html = f"""<table class="data-table"><thead><tr>
+                <th>NUMBER</th><th>TYPE</th><th>CLIENT</th><th>PROJECT</th>
+                <th class="num">AMOUNT</th><th>DATE</th><th>STATUS</th>
+            </tr></thead><tbody>"""
+
+            for doc in filtered:
+                s_color = _status_colors.get(doc['status'], t['muted'])
+                status_badge = (f'<span style="color:{s_color};background:rgba({",".join(str(int(s_color.lstrip("#")[i:i+2],16)) for i in (0,2,4))},0.15);'
+                                f'padding:2px 10px;border-radius:10px;font-size:0.72rem;font-weight:600">'
+                                f'{doc["status"]}</span>')
+                table_html += f"""<tr>
+                    <td style="font-weight:600">{doc['number']}</td>
+                    <td>{doc['type']}</td>
+                    <td>{doc['client']}</td>
+                    <td>{doc['project']}</td>
+                    <td class="num">{_fmt_eur_de(doc['amount'])} &euro;</td>
+                    <td>{doc['date']}</td>
+                    <td>{status_badge}</td>
+                </tr>"""
+
+            table_html += "</tbody></table>"
+            st.markdown(table_html, unsafe_allow_html=True)
+            st.markdown("")
+
+            # ── Action rows (Streamlit buttons per document) ──
+            for doc in filtered:
+                dn = doc['number']
+                ac1, ac2, ac3, ac4 = st.columns([1, 1, 1, 0.5])
+
+                # PDF download
+                with ac1:
+                    if st.button(f"PDF {dn}", key=f"pdf_{dn}"):
+                        pdf_bytes = None
+                        try:
+                            if doc['type'] == 'Offer':
+                                fid = _get_offers_folder_id()
+                            else:
+                                fid = _get_invoices_folder_id()
+                            if fid:
+                                files = _drive_list_files(fid)
+                                search_key = dn.replace('RE', '').replace('AG', '')
+                                for f in files:
+                                    if search_key in f['name'] and f['name'].endswith('.pdf'):
+                                        pdf_bytes = _drive_download_bytes(f['id'])
+                                        st.download_button(
+                                            f"Download {dn}",
+                                            data=pdf_bytes,
+                                            file_name=f['name'],
+                                            mime='application/pdf',
+                                            key=f"dl_{dn}",
+                                        )
+                                        break
+                                if pdf_bytes is None:
+                                    st.caption("PDF not found on Drive.")
+                        except Exception as e:
+                            st.caption(f"Error: {e}")
+
+                # Edit
+                with ac2:
+                    if st.button(f"Edit {dn}", key=f"edit_{dn}"):
+                        meta = _get_document_meta(dn)
+                        if meta:
+                            if doc['type'] == 'Offer':
+                                st.session_state['edit_offer'] = meta
+                            else:
+                                st.session_state['edit_invoice'] = meta
+                            st.info(f"Pre-filled edit form for **{dn}** — switch to the {'NEW OFFER' if doc['type'] == 'Offer' else 'NEW INVOICE'} tab.")
+                        else:
+                            st.caption("No editable metadata found for this document.")
+
+                # Status change
+                with ac3:
+                    if st.button(f"Status {dn}", key=f"status_{dn}"):
+                        _dlg_change_status(dn, doc['type'], doc['status'])
+
+                # Delete
+                with ac4:
+                    if st.button(f"✕", key=f"del_{dn}"):
+                        _dlg_delete_doc(dn, doc['type'], doc['source'])
 
     # ────────────────────────────────────────────────────────────
     # SUB-TAB 1: NEW INVOICE
     # ────────────────────────────────────────────────────────────
     with sub1:
+        t = _t()
         st.markdown("#### Create Invoice (Rechnung)")
         st.caption("Generate a professional PDF invoice and save to Google Drive.")
 
-        # Client selection
-        client_names = ['— Select Client —'] + [c['name'] for c in clients]
-        sel_client_idx = st.selectbox("Client", range(len(client_names)),
-                                       format_func=lambda i: client_names[i],
-                                       key='inv_client_sel')
+        # Check for edit pre-fill
+        edit_inv = st.session_state.pop('edit_invoice', None)
 
-        if sel_client_idx > 0:
-            sel_client = clients[sel_client_idx - 1]
-            inv_client_name = sel_client['name']
-            inv_client_addr = st.text_area("Client Address", value=sel_client.get('address', ''),
-                                            height=68, key='inv_client_addr')
-            inv_client_id = sel_client['id']
-        else:
-            inv_client_name = st.text_input("Client Name (new)", key='inv_client_name_new')
-            inv_client_addr = st.text_area("Client Address", height=68, key='inv_client_addr_new')
-            inv_client_id = ''
+        # Container 1: Client + Address
+        with st.container(border=True):
+            ci1, ci2 = st.columns(2)
+            with ci1:
+                client_names = ['-- Select Client --'] + [c['name'] for c in clients]
+                default_client_idx = 0
+                if edit_inv:
+                    edit_client_name = str(edit_inv.get('Client', '')).strip()
+                    for i, cn in enumerate(client_names):
+                        if cn == edit_client_name:
+                            default_client_idx = i
+                            break
+                sel_client_idx = st.selectbox("Client", range(len(client_names)),
+                                               format_func=lambda i: client_names[i],
+                                               index=default_client_idx,
+                                               key='inv_client_sel')
+            with ci2:
+                if sel_client_idx > 0:
+                    sel_client = clients[sel_client_idx - 1]
+                    inv_client_name = sel_client['name']
+                    inv_client_addr = st.text_area("Client Address",
+                                                    value=sel_client.get('address', ''),
+                                                    height=68, key='inv_client_addr')
+                    inv_client_id = sel_client['id']
+                else:
+                    inv_client_name = st.text_input("Client Name (new)",
+                                                     value=str(edit_inv.get('Client', '')) if edit_inv and default_client_idx == 0 else '',
+                                                     key='inv_client_name_new')
+                    inv_client_addr = st.text_area("Client Address", height=68,
+                                                    value=str(edit_inv.get('Client Address', '')) if edit_inv else '',
+                                                    key='inv_client_addr_new')
+                    inv_client_id = ''
 
-        c1, c2 = st.columns(2)
-        with c1:
-            inv_date = st.date_input("Invoice Date", value=datetime.today(), key='inv_date')
-        with c2:
-            inv_service_date = st.text_input("Service Date", placeholder="e.g. February 2026",
-                                              key='inv_service_date')
+        # Container 2: Project Title + Invoice Date
+        with st.container(border=True):
+            ci3, ci4 = st.columns(2)
+            with ci3:
+                inv_title = st.text_input("Project Title",
+                                           value=str(edit_inv.get('Project', '')) if edit_inv else '',
+                                           key='inv_title')
+            with ci4:
+                default_date = datetime.today()
+                if edit_inv and edit_inv.get('Date'):
+                    try:
+                        default_date = datetime.strptime(str(edit_inv['Date']), '%Y-%m-%d')
+                    except Exception:
+                        pass
+                inv_date = st.date_input("Invoice Date", value=default_date, key='inv_date')
 
-        c3, c4 = st.columns(2)
-        with c3:
-            inv_title = st.text_input("Project Title", key='inv_title')
-        with c4:
-            inv_category = st.selectbox("Category (internal)", INCOME_CATEGORIES, key='inv_cat')
+        # Container 3: Project Description
+        with st.container(border=True):
+            inv_description = st.text_area("Project Description",
+                                            value=str(edit_inv.get('Description', '')) if edit_inv else '',
+                                            height=80, key='inv_desc')
 
-        inv_description = st.text_area("Description (optional)", height=80, key='inv_desc')
+        # Container 4: Category + Service Date
+        with st.container(border=True):
+            ci5, ci6 = st.columns(2)
+            with ci5:
+                default_cat_idx = 0
+                if edit_inv and edit_inv.get('Category'):
+                    try:
+                        default_cat_idx = INCOME_CATEGORIES.index(str(edit_inv['Category']))
+                    except ValueError:
+                        pass
+                inv_category = st.selectbox("Category", INCOME_CATEGORIES,
+                                             index=default_cat_idx, key='inv_cat')
+            with ci6:
+                inv_service_date = st.text_input("Service Date", placeholder="e.g. February 2026",
+                                                  value=str(edit_inv.get('Service Date', '')) if edit_inv else '',
+                                                  key='inv_service_date')
 
-        c5, c6 = st.columns(2)
-        with c5:
-            inv_location = st.text_input("Location (optional)", key='inv_loc')
-        with c6:
-            inv_event_date = st.text_input("Event Date (optional)", key='inv_event_date')
+        # Expander: Additional Details
+        with st.expander("Additional Details", expanded=bool(edit_inv)):
+            ad1, ad2 = st.columns(2)
+            with ad1:
+                inv_location = st.text_input("Location (optional)",
+                                              value=str(edit_inv.get('Location', '')) if edit_inv else '',
+                                              key='inv_loc')
+            with ad2:
+                inv_event_date = st.text_input("Event Date (optional)",
+                                                value=str(edit_inv.get('Event Date', '')) if edit_inv else '',
+                                                key='inv_event_date')
 
-        # Invoice type
-        inv_type = st.selectbox("Invoice Type", ['Standard', 'Deposit (Abschlagsrechnung)'],
-                                 key='inv_type')
-        is_deposit = inv_type.startswith('Deposit')
-        deposit_label = ''
-        project_total = 0.0
-        if is_deposit:
-            dc1, dc2 = st.columns(2)
-            with dc1:
-                deposit_label = st.text_input("Deposit Label", value="ABSCHLAGSRECHNUNG",
-                                               key='inv_dep_label')
-            with dc2:
-                project_total = st.number_input("Total Project Value (€)", min_value=0.0,
-                                                 step=100.0, format="%.2f", key='inv_proj_total')
+            inv_type_options = ['Standard', 'Deposit (Abschlagsrechnung)']
+            default_inv_type = 0
+            if edit_inv and str(edit_inv.get('Invoice Type', '')).lower() == 'deposit':
+                default_inv_type = 1
+            inv_type = st.selectbox("Invoice Type", inv_type_options,
+                                     index=default_inv_type, key='inv_type')
+            is_deposit = inv_type.startswith('Deposit')
+            deposit_label = ''
+            project_total = 0.0
+            if is_deposit:
+                dc1, dc2 = st.columns(2)
+                with dc1:
+                    deposit_label = st.text_input("Deposit Label",
+                                                   value=str(edit_inv.get('Deposit Label', 'ABSCHLAGSRECHNUNG')) if edit_inv else 'ABSCHLAGSRECHNUNG',
+                                                   key='inv_dep_label')
+                with dc2:
+                    project_total = st.number_input("Total Project Value (EUR)", min_value=0.0,
+                                                     step=100.0, format="%.2f",
+                                                     value=float(edit_inv.get('Project Total', 0) or 0) if edit_inv else 0.0,
+                                                     key='inv_proj_total')
 
         # Line items
-        st.markdown("**Line Items**")
+        _text_c = t['text']
+        st.markdown(f"<h5 style='color:{_text_c};font-family:{FONT};margin-top:1rem'>Line Items</h5>",
+                    unsafe_allow_html=True)
         if 'inv_items' not in st.session_state:
-            st.session_state['inv_items'] = [{'description': '', 'detail': '', 'qty': 1.0,
-                                               'unit': 'pcs', 'unit_price': 0.0}]
+            if edit_inv and edit_inv.get('Items JSON'):
+                try:
+                    loaded_items = _json.loads(str(edit_inv['Items JSON']))
+                    st.session_state['inv_items'] = [
+                        {'description': it.get('description', ''), 'detail': it.get('detail', ''),
+                         'qty': float(it.get('qty', 1)), 'unit': it.get('unit', 'pcs'),
+                         'unit_price': float(it.get('unit_price', 0))}
+                        for it in loaded_items
+                    ] if loaded_items else [{'description': '', 'detail': '', 'qty': 1.0, 'unit': 'pcs', 'unit_price': 0.0}]
+                except Exception:
+                    st.session_state['inv_items'] = [{'description': '', 'detail': '', 'qty': 1.0,
+                                                       'unit': 'pcs', 'unit_price': 0.0}]
+            else:
+                st.session_state['inv_items'] = [{'description': '', 'detail': '', 'qty': 1.0,
+                                                   'unit': 'pcs', 'unit_price': 0.0}]
 
         items_to_remove = None
         for idx, item in enumerate(st.session_state['inv_items']):
             ic1, ic2, ic3, ic4, ic5 = st.columns([3, 1, 1, 1.5, 0.5])
             with ic1:
-                item['description'] = st.text_input(f"Description", value=item['description'],
+                item['description'] = st.text_input("Description", value=item['description'],
                                                      key=f'inv_item_desc_{idx}')
             with ic2:
-                item['qty'] = st.number_input(f"Qty", value=float(item['qty']), min_value=0.0,
+                item['qty'] = st.number_input("Qty", value=float(item['qty']), min_value=0.0,
                                                step=0.5, format="%.1f", key=f'inv_item_qty_{idx}')
             with ic3:
-                item['unit'] = st.text_input(f"Unit", value=item['unit'],
+                item['unit'] = st.text_input("Unit", value=item['unit'],
                                               key=f'inv_item_unit_{idx}')
             with ic4:
-                item['unit_price'] = st.number_input(f"Price (€)", value=float(item['unit_price']),
+                item['unit_price'] = st.number_input("Price (EUR)", value=float(item['unit_price']),
                                                       min_value=0.0, step=10.0, format="%.2f",
                                                       key=f'inv_item_price_{idx}')
             with ic5:
                 if idx > 0:
-                    if st.button("✕", key=f'inv_item_rm_{idx}'):
+                    if st.button("x", key=f'inv_item_rm_{idx}'):
                         items_to_remove = idx
 
-            item['detail'] = st.text_input(f"Detail (optional)", value=item.get('detail', ''),
+            item['detail'] = st.text_input("Detail (optional)", value=item.get('detail', ''),
                                             key=f'inv_item_detail_{idx}')
 
         if items_to_remove is not None:
@@ -2682,7 +3301,7 @@ def tab_invoices_offers(data):
         # Calculate totals
         line_items = []
         for idx, item in enumerate(st.session_state['inv_items']):
-            total = item['qty'] * item['unit_price']
+            total_li = item['qty'] * item['unit_price']
             line_items.append({
                 'pos': idx + 1,
                 'description': item['description'],
@@ -2690,7 +3309,7 @@ def tab_invoices_offers(data):
                 'qty': item['qty'],
                 'unit': item['unit'],
                 'unit_price': item['unit_price'],
-                'total': total,
+                'total': total_li,
             })
         subtotal = sum(it['total'] for it in line_items)
         vat = round(subtotal * VAT_RATE, 2)
@@ -2700,17 +3319,25 @@ def tab_invoices_offers(data):
         st.markdown("---")
         tc1, tc2, tc3 = st.columns(3)
         with tc1:
-            st.metric("Subtotal (Netto)", f"{_fmt_eur_de(subtotal)} €")
+            st.metric("Subtotal (Netto)", f"{_fmt_eur_de(subtotal)} EUR")
         with tc2:
-            st.metric("USt. 19%", f"{_fmt_eur_de(vat)} €")
+            st.metric("USt. 19%", f"{_fmt_eur_de(vat)} EUR")
         with tc3:
-            st.metric("Total (Brutto)", f"{_fmt_eur_de(total)} €")
+            st.metric("Total (Brutto)", f"{_fmt_eur_de(total)} EUR")
 
         st.markdown("---")
 
-        # Generate button
-        if st.button("🧾 Generate Invoice PDF", type="primary", use_container_width=True,
-                      key='inv_generate'):
+        # Two action buttons
+        btn1, btn2 = st.columns(2)
+        with btn1:
+            generate_inv = st.button("Generate PDF", type="primary", use_container_width=True,
+                                      key='inv_generate')
+        with btn2:
+            save_draft_inv = st.button("Save as Draft", use_container_width=True,
+                                        key='inv_save_draft')
+
+        # ── Generate Invoice PDF ──
+        if generate_inv:
             client_name = inv_client_name.strip() if inv_client_name else ''
             if not client_name:
                 st.error("Please select or enter a client name.")
@@ -2718,17 +3345,11 @@ def tab_invoices_offers(data):
                 st.error("Please add at least one line item with a price.")
             else:
                 with st.spinner("Generating invoice..."):
-                    # Get or create client
                     client = _get_or_create_client(client_name, inv_client_addr)
-
-                    # Generate invoice number
                     inv_number = _next_invoice_number()
-
-                    # Format date
                     date_formatted = inv_date.strftime('%d.%m.%Y')
                     date_iso = inv_date.strftime('%Y-%m-%d')
 
-                    # Build doc data
                     doc_data = {
                         'number': inv_number,
                         'date': date_iso,
@@ -2750,7 +3371,6 @@ def tab_invoices_offers(data):
                         'project_total': project_total if is_deposit else 0,
                     }
 
-                    # Generate PDF
                     pdf_bytes = _generate_document_pdf('invoice', doc_data)
                     filename = f"notpaid_Rechnung_JosefSindelka_{inv_number}.pdf"
 
@@ -2759,15 +3379,14 @@ def tab_invoices_offers(data):
                         folder_id = _get_invoices_folder_id()
                         if folder_id:
                             _drive_upload_bytes(folder_id, filename, pdf_bytes)
-                            st.success(f"✅ Invoice **{inv_number}** uploaded to Drive: `{INVOICES_FOLDER}/{filename}`")
+                            st.success(f"Invoice **{inv_number}** uploaded to Drive: `{INVOICES_FOLDER}/{filename}`")
                         else:
-                            st.warning("Could not find INVOICES folder — PDF generated but not uploaded.")
+                            st.warning("Could not find INVOICES folder -- PDF generated but not uploaded.")
                     except Exception as e:
                         st.error(f"Drive upload failed: {e}")
 
                     # Add to Income sheet (unpaid)
                     try:
-                        # Extract numeric part for sheet (e.g., RE2026054 → 2026054)
                         sheet_inv_num = inv_number.replace('RE', '')
                         inv_data_for_sheet = {
                             'id': '',
@@ -2782,72 +3401,169 @@ def tab_invoices_offers(data):
                         }
                         add_invoice_to_excel(inv_data_for_sheet, status='unpaid')
                         _invalidate_data_caches()
-                        st.success(f"✅ Added to Income sheet as unpaid invoice.")
+                        st.success("Added to Income sheet as unpaid invoice.")
                     except Exception as e:
                         st.error(f"Could not add to Income sheet: {e}")
 
-                    _log_activity('INVOICE_CREATED', f"{inv_number} | {client['name']} | {_fmt_eur_de(total)} €")
+                    # Save metadata
+                    _save_document_meta(inv_number, 'Invoice', {
+                        'client': client['name'], 'client_address': inv_client_addr,
+                        'project': inv_title, 'category': inv_category,
+                        'description': inv_description, 'date': date_iso,
+                        'location': inv_location, 'event_date': inv_event_date,
+                        'service_date': inv_service_date,
+                        'invoice_type': 'deposit' if is_deposit else 'standard',
+                        'deposit_label': deposit_label if is_deposit else '',
+                        'project_total': project_total if is_deposit else 0,
+                        'validity': '', 'netto': subtotal, 'brutto': total,
+                        'items_json': _json.dumps(line_items), 'status': 'SENT',
+                    })
 
-                    # Download button
-                    st.download_button("⬇ Download PDF", data=pdf_bytes, file_name=filename,
+                    _log_activity('INVOICE_CREATED', f"{inv_number} | {client['name']} | {_fmt_eur_de(total)} EUR")
+
+                    st.download_button("Download PDF", data=pdf_bytes, file_name=filename,
                                         mime='application/pdf', key='inv_download')
 
-                    # Reset line items
                     st.session_state['inv_items'] = [{'description': '', 'detail': '', 'qty': 1.0,
                                                        'unit': 'pcs', 'unit_price': 0.0}]
+
+        # ── Save Invoice as Draft ──
+        if save_draft_inv:
+            client_name = inv_client_name.strip() if inv_client_name else ''
+            if not client_name:
+                st.error("Please enter a client name to save a draft.")
+            else:
+                inv_number = _next_invoice_number()
+                date_iso = inv_date.strftime('%Y-%m-%d')
+                _save_document_meta(inv_number, 'Invoice', {
+                    'client': client_name, 'client_address': inv_client_addr,
+                    'project': inv_title, 'category': inv_category,
+                    'description': inv_description, 'date': date_iso,
+                    'location': inv_location, 'event_date': inv_event_date,
+                    'service_date': inv_service_date,
+                    'invoice_type': 'deposit' if is_deposit else 'standard',
+                    'deposit_label': deposit_label if is_deposit else '',
+                    'project_total': project_total if is_deposit else 0,
+                    'validity': '', 'netto': subtotal, 'brutto': total,
+                    'items_json': _json.dumps(line_items), 'status': 'DRAFT',
+                })
+                _log_activity('INVOICE_DRAFT', f"{inv_number} | {client_name} | {_fmt_eur_de(total)} EUR")
+                st.success(f"Draft **{inv_number}** saved. You can find it in the Dashboard.")
 
     # ────────────────────────────────────────────────────────────
     # SUB-TAB 2: NEW OFFER
     # ────────────────────────────────────────────────────────────
     with sub2:
+        t = _t()
         st.markdown("#### Create Offer (Angebot)")
         st.caption("Generate a professional PDF offer and save to Google Drive.")
 
-        # Client selection
-        off_client_names = ['— Select Client —'] + [c['name'] for c in clients]
-        off_sel_idx = st.selectbox("Client", range(len(off_client_names)),
-                                    format_func=lambda i: off_client_names[i],
-                                    key='off_client_sel')
+        # Check for edit pre-fill
+        edit_off = st.session_state.pop('edit_offer', None)
 
-        if off_sel_idx > 0:
-            off_sel_client = clients[off_sel_idx - 1]
-            off_client_name = off_sel_client['name']
-            off_client_addr = st.text_area("Client Address",
-                                            value=off_sel_client.get('address', ''),
-                                            height=68, key='off_client_addr')
-            off_client_id = off_sel_client['id']
-        else:
-            off_client_name = st.text_input("Client Name (new)", key='off_client_name_new')
-            off_client_addr = st.text_area("Client Address", height=68, key='off_client_addr_new')
-            off_client_id = ''
+        # Container 1: Client + Address
+        with st.container(border=True):
+            co1, co2 = st.columns(2)
+            with co1:
+                off_client_names = ['-- Select Client --'] + [c['name'] for c in clients]
+                default_off_client = 0
+                if edit_off:
+                    edit_off_client = str(edit_off.get('Client', '')).strip()
+                    for i, cn in enumerate(off_client_names):
+                        if cn == edit_off_client:
+                            default_off_client = i
+                            break
+                off_sel_idx = st.selectbox("Client", range(len(off_client_names)),
+                                            format_func=lambda i: off_client_names[i],
+                                            index=default_off_client,
+                                            key='off_client_sel')
+            with co2:
+                if off_sel_idx > 0:
+                    off_sel_client = clients[off_sel_idx - 1]
+                    off_client_name = off_sel_client['name']
+                    off_client_addr = st.text_area("Client Address",
+                                                    value=off_sel_client.get('address', ''),
+                                                    height=68, key='off_client_addr')
+                    off_client_id = off_sel_client['id']
+                else:
+                    off_client_name = st.text_input("Client Name (new)",
+                                                     value=str(edit_off.get('Client', '')) if edit_off and default_off_client == 0 else '',
+                                                     key='off_client_name_new')
+                    off_client_addr = st.text_area("Client Address", height=68,
+                                                    value=str(edit_off.get('Client Address', '')) if edit_off else '',
+                                                    key='off_client_addr_new')
+                    off_client_id = ''
 
-        oc1, oc2 = st.columns(2)
-        with oc1:
-            off_date = st.date_input("Offer Date", value=datetime.today(), key='off_date')
-        with oc2:
-            off_validity = st.number_input("Validity (days)", value=30, min_value=1,
-                                            max_value=365, key='off_validity')
+        # Container 2: Project Title + Offer Date
+        with st.container(border=True):
+            co3, co4 = st.columns(2)
+            with co3:
+                off_title = st.text_input("Project Title",
+                                           value=str(edit_off.get('Project', '')) if edit_off else '',
+                                           key='off_title')
+            with co4:
+                default_off_date = datetime.today()
+                if edit_off and edit_off.get('Date'):
+                    try:
+                        default_off_date = datetime.strptime(str(edit_off['Date']), '%Y-%m-%d')
+                    except Exception:
+                        pass
+                off_date = st.date_input("Offer Date", value=default_off_date, key='off_date')
 
-        oc3, oc4 = st.columns(2)
-        with oc3:
-            off_title = st.text_input("Project Title", key='off_title')
-        with oc4:
-            off_category = st.selectbox("Category (internal)", INCOME_CATEGORIES,
-                                         key='off_cat')
+        # Container 3: Description
+        with st.container(border=True):
+            off_description = st.text_area("Project Description",
+                                            value=str(edit_off.get('Description', '')) if edit_off else '',
+                                            height=80, key='off_desc')
 
-        off_description = st.text_area("Description (optional)", height=80, key='off_desc')
+        # Container 4: Category + Validity
+        with st.container(border=True):
+            co5, co6 = st.columns(2)
+            with co5:
+                default_off_cat = 0
+                if edit_off and edit_off.get('Category'):
+                    try:
+                        default_off_cat = INCOME_CATEGORIES.index(str(edit_off['Category']))
+                    except ValueError:
+                        pass
+                off_category = st.selectbox("Category", INCOME_CATEGORIES,
+                                             index=default_off_cat, key='off_cat')
+            with co6:
+                off_validity = st.number_input("Validity (Days)", value=int(edit_off.get('Validity', 30) or 30) if edit_off else 30,
+                                                min_value=1, max_value=365, key='off_validity')
 
-        oc5, oc6 = st.columns(2)
-        with oc5:
-            off_location = st.text_input("Location (optional)", key='off_loc')
-        with oc6:
-            off_event_date = st.text_input("Event Date (optional)", key='off_event_date')
+        # Expander: Additional Details
+        with st.expander("Additional Details", expanded=bool(edit_off)):
+            oad1, oad2 = st.columns(2)
+            with oad1:
+                off_location = st.text_input("Location (optional)",
+                                              value=str(edit_off.get('Location', '')) if edit_off else '',
+                                              key='off_loc')
+            with oad2:
+                off_event_date = st.text_input("Event Date (optional)",
+                                                value=str(edit_off.get('Event Date', '')) if edit_off else '',
+                                                key='off_event_date')
 
         # Line items
-        st.markdown("**Line Items**")
+        _text_c = t['text']
+        st.markdown(f"<h5 style='color:{_text_c};font-family:{FONT};margin-top:1rem'>Line Items</h5>",
+                    unsafe_allow_html=True)
         if 'off_items' not in st.session_state:
-            st.session_state['off_items'] = [{'description': '', 'detail': '', 'qty': 1.0,
-                                               'unit': 'pcs', 'unit_price': 0.0}]
+            if edit_off and edit_off.get('Items JSON'):
+                try:
+                    loaded_off_items = _json.loads(str(edit_off['Items JSON']))
+                    st.session_state['off_items'] = [
+                        {'description': it.get('description', ''), 'detail': it.get('detail', ''),
+                         'qty': float(it.get('qty', 1)), 'unit': it.get('unit', 'pcs'),
+                         'unit_price': float(it.get('unit_price', 0))}
+                        for it in loaded_off_items
+                    ] if loaded_off_items else [{'description': '', 'detail': '', 'qty': 1.0, 'unit': 'pcs', 'unit_price': 0.0}]
+                except Exception:
+                    st.session_state['off_items'] = [{'description': '', 'detail': '', 'qty': 1.0,
+                                                       'unit': 'pcs', 'unit_price': 0.0}]
+            else:
+                st.session_state['off_items'] = [{'description': '', 'detail': '', 'qty': 1.0,
+                                                   'unit': 'pcs', 'unit_price': 0.0}]
 
         off_items_remove = None
         for idx, item in enumerate(st.session_state['off_items']):
@@ -2862,12 +3578,12 @@ def tab_invoices_offers(data):
                 item['unit'] = st.text_input("Unit", value=item['unit'],
                                               key=f'off_item_unit_{idx}')
             with lic4:
-                item['unit_price'] = st.number_input("Price (€)", value=float(item['unit_price']),
+                item['unit_price'] = st.number_input("Price (EUR)", value=float(item['unit_price']),
                                                       min_value=0.0, step=10.0, format="%.2f",
                                                       key=f'off_item_price_{idx}')
             with lic5:
                 if idx > 0:
-                    if st.button("✕", key=f'off_item_rm_{idx}'):
+                    if st.button("x", key=f'off_item_rm_{idx}'):
                         off_items_remove = idx
 
             item['detail'] = st.text_input("Detail (optional)", value=item.get('detail', ''),
@@ -2902,16 +3618,25 @@ def tab_invoices_offers(data):
         st.markdown("---")
         otc1, otc2, otc3 = st.columns(3)
         with otc1:
-            st.metric("Subtotal (Netto)", f"{_fmt_eur_de(off_subtotal)} €")
+            st.metric("Subtotal (Netto)", f"{_fmt_eur_de(off_subtotal)} EUR")
         with otc2:
-            st.metric("USt. 19%", f"{_fmt_eur_de(off_vat)} €")
+            st.metric("USt. 19%", f"{_fmt_eur_de(off_vat)} EUR")
         with otc3:
-            st.metric("Total (Brutto)", f"{_fmt_eur_de(off_total)} €")
+            st.metric("Total (Brutto)", f"{_fmt_eur_de(off_total)} EUR")
 
         st.markdown("---")
 
-        if st.button("📋 Generate Offer PDF", type="primary", use_container_width=True,
-                      key='off_generate'):
+        # Two action buttons
+        obtn1, obtn2 = st.columns(2)
+        with obtn1:
+            generate_off = st.button("Generate PDF", type="primary", use_container_width=True,
+                                      key='off_generate')
+        with obtn2:
+            save_draft_off = st.button("Save as Draft", use_container_width=True,
+                                        key='off_save_draft')
+
+        # ── Generate Offer PDF ──
+        if generate_off:
             off_name = off_client_name.strip() if off_client_name else ''
             if not off_name:
                 st.error("Please select or enter a client name.")
@@ -2952,19 +3677,88 @@ def tab_invoices_offers(data):
                         folder_id = _get_offers_folder_id()
                         if folder_id:
                             _drive_upload_bytes(folder_id, filename, pdf_bytes)
-                            st.success(f"✅ Offer **{off_number}** uploaded to Drive: `{OFFERS_FOLDER}/{filename}`")
+                            st.success(f"Offer **{off_number}** uploaded to Drive: `{OFFERS_FOLDER}/{filename}`")
                         else:
-                            st.warning("Could not find/create OFFERS folder — PDF generated but not uploaded.")
+                            st.warning("Could not find/create OFFERS folder -- PDF generated but not uploaded.")
                     except Exception as e:
                         st.error(f"Drive upload failed: {e}")
 
-                    _log_activity('OFFER_CREATED', f"{off_number} | {client['name']} | {_fmt_eur_de(off_total)} €")
+                    # Save to Offers sheet
+                    _save_offer_to_sheet({
+                        'offer_number': off_number,
+                        'date': off_date.strftime('%Y-%m-%d'),
+                        'client': client['name'],
+                        'project': off_title,
+                        'category': off_category,
+                        'netto': off_subtotal,
+                        'brutto': off_total,
+                        'validity': off_validity,
+                        'valid_until': valid_until_date.strftime('%d.%m.%Y'),
+                        'status': 'SENT',
+                        'items_json': _json.dumps(off_line_items),
+                    })
 
-                    st.download_button("⬇ Download PDF", data=pdf_bytes, file_name=filename,
+                    # Save metadata
+                    _save_document_meta(off_number, 'Offer', {
+                        'client': client['name'], 'client_address': off_client_addr,
+                        'project': off_title, 'category': off_category,
+                        'description': off_description,
+                        'date': off_date.strftime('%Y-%m-%d'),
+                        'location': off_location, 'event_date': off_event_date,
+                        'service_date': '', 'invoice_type': '', 'deposit_label': '',
+                        'project_total': 0, 'validity': off_validity,
+                        'netto': off_subtotal, 'brutto': off_total,
+                        'items_json': _json.dumps(off_line_items), 'status': 'SENT',
+                    })
+
+                    _log_activity('OFFER_CREATED', f"{off_number} | {client['name']} | {_fmt_eur_de(off_total)} EUR")
+
+                    st.download_button("Download PDF", data=pdf_bytes, file_name=filename,
                                         mime='application/pdf', key='off_download')
 
                     st.session_state['off_items'] = [{'description': '', 'detail': '', 'qty': 1.0,
                                                        'unit': 'pcs', 'unit_price': 0.0}]
+
+        # ── Save Offer as Draft ──
+        if save_draft_off:
+            off_name = off_client_name.strip() if off_client_name else ''
+            if not off_name:
+                st.error("Please enter a client name to save a draft.")
+            else:
+                off_number = _next_offer_number()
+                from datetime import timedelta
+                valid_until_date = off_date + timedelta(days=off_validity)
+
+                # Save to Offers sheet with DRAFT status
+                _save_offer_to_sheet({
+                    'offer_number': off_number,
+                    'date': off_date.strftime('%Y-%m-%d'),
+                    'client': off_name,
+                    'project': off_title,
+                    'category': off_category,
+                    'netto': off_subtotal,
+                    'brutto': off_total,
+                    'validity': off_validity,
+                    'valid_until': valid_until_date.strftime('%d.%m.%Y'),
+                    'status': 'DRAFT',
+                    'items_json': _json.dumps(off_line_items),
+                })
+
+                # Save to DocumentMeta
+                _save_document_meta(off_number, 'Offer', {
+                    'client': off_name, 'client_address': off_client_addr,
+                    'project': off_title, 'category': off_category,
+                    'description': off_description,
+                    'date': off_date.strftime('%Y-%m-%d'),
+                    'location': off_location, 'event_date': off_event_date,
+                    'service_date': '', 'invoice_type': '', 'deposit_label': '',
+                    'project_total': 0, 'validity': off_validity,
+                    'netto': off_subtotal, 'brutto': off_total,
+                    'items_json': _json.dumps(off_line_items), 'status': 'DRAFT',
+                })
+
+                _log_activity('OFFER_DRAFT', f"{off_number} | {off_name} | {_fmt_eur_de(off_total)} EUR")
+                st.success(f"Draft **{off_number}** saved. You can find it in the Dashboard.")
 
     # ────────────────────────────────────────────────────────────
     # SUB-TAB 3: CLIENTS
@@ -2990,7 +3784,7 @@ def tab_invoices_offers(data):
             st.info("No clients yet. They will be auto-created when you generate your first invoice or offer.")
 
         # Add client form
-        with st.expander("➕ Add New Client", expanded=False):
+        with st.expander("Add New Client", expanded=False):
             nc1, nc2 = st.columns(2)
             with nc1:
                 new_name = st.text_input("Name", key='new_client_name')
@@ -3012,7 +3806,7 @@ def tab_invoices_offers(data):
                     }
                     _save_client_to_sheet(new_client)
                     _log_activity('CLIENT_ADDED', f"{new_client['id']} | {new_client['name']}")
-                    st.success(f"✅ Client **{new_client['name']}** ({new_client['id']}) added.")
+                    st.success(f"Client **{new_client['name']}** ({new_client['id']}) added.")
                     st.rerun()
 
 

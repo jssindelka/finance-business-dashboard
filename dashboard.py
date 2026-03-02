@@ -36,104 +36,90 @@ MONTHS = [
     'July', 'August', 'September', 'October', 'November', 'December'
 ]
 
-# ─── Theme System ────────────────────────────────────────────────────────────
-THEMES = {
-    'light': {
-        'bg': '#FAFAFA',
-        'surface': '#FFFFFF',
-        'surface2': '#F5F5F5',
-        'surface3': '#F0F0F0',
-        'border': '#E5E5E5',
-        'border_hover': '#D4D4D4',
-        'text': '#111111',
-        'text_secondary': '#525252',
-        'muted': '#737373',
-        'card_shadow': 'none',
-        'card_shadow_hover': 'none',
-        'chart_grid': '#F5F5F5',
-        'chart_zeroline': '#E5E5E5',
-        'row_hover': '#FAFAFA',
-        'row_border': '#F5F5F5',
-        'sidebar_bg': '#111111',
-        'sidebar_text': '#FFFFFF',
-        'sidebar_text_dim': '#A3A3A3',
-        'sidebar_section': '#525252',
-        'sidebar_border': '#404040',
-        'sidebar_hover': '#262626',
-    },
-    'dark': {
-        'bg': '#0A0A0A',
-        'surface': '#141414',
-        'surface2': '#1A1A1A',
-        'surface3': '#262626',
-        'border': '#2A2A2A',
-        'border_hover': '#404040',
-        'text': '#F0F0F0',
-        'text_secondary': '#A3A3A3',
-        'muted': '#737373',
-        'card_shadow': 'none',
-        'card_shadow_hover': 'none',
-        'chart_grid': '#1A1A1A',
-        'chart_zeroline': '#2A2A2A',
-        'row_hover': 'rgba(255,255,255,0.03)',
-        'row_border': '#1A1A1A',
-        'sidebar_bg': '#0A0A0A',
-        'sidebar_text': '#F0F0F0',
-        'sidebar_text_dim': '#737373',
-        'sidebar_section': '#404040',
-        'sidebar_border': '#1A1A1A',
-        'sidebar_hover': '#141414',
-    },
+# ─── Theme System (Dark Only — Linear/Vercel Style) ─────────────────────────
+THEME = {
+    'bg': '#09090B',
+    'surface': '#18181B',
+    'surface2': '#27272A',
+    'surface3': '#3F3F46',
+    'border': '#27272A',
+    'border_hover': '#3F3F46',
+    'text': '#FAFAFA',
+    'text_secondary': '#A1A1AA',
+    'muted': '#71717A',
+    'card_shadow': 'none',
+    'card_shadow_hover': 'none',
+    'chart_grid': '#27272A',
+    'chart_zeroline': '#3F3F46',
+    'row_hover': '#1F1F23',
+    'row_border': '#27272A',
+    'accent': '#3B82F6',
+    'accent_hover': '#2563EB',
+    'accent_dim': 'rgba(59,130,246,0.1)',
+    'accent_text': '#60A5FA',
+    'positive': '#4ADE80',
+    'positive_dim': 'rgba(74,222,128,0.1)',
+    'negative': '#F87171',
+    'negative_dim': 'rgba(248,113,113,0.1)',
+    'sidebar_bg': '#09090B',
+    'sidebar_text': '#FAFAFA',
+    'sidebar_text_dim': '#71717A',
+    'sidebar_section': '#52525B',
+    'sidebar_border': '#27272A',
+    'sidebar_hover': '#18181B',
+    'sidebar_active_bg': 'rgba(59,130,246,0.1)',
+    'sidebar_active_text': '#60A5FA',
+    'sidebar_active_border': '#3B82F6',
 }
 
 def _t():
-    """Return current theme dict based on session state."""
-    return THEMES[st.session_state.get('theme', 'light')]
+    """Return theme dict (dark only)."""
+    return THEME
 
 def _chart_primary():
-    return '#111111' if st.session_state.get('theme', 'light') == 'light' else '#F0F0F0'
+    return '#3B82F6'
 
 def _chart_primary_dim():
-    return '#D4D4D4' if st.session_state.get('theme', 'light') == 'light' else '#404040'
+    return '#60A5FA'
 
-# ─── Accent Colors (shared across themes) ───────────────────────────────────
-C_PRIMARY = '#111111'
-C_PRIMARY_LIGHT = '#404040'
-C_GREEN = '#065F46'
-C_GREEN_BG = '#D1FAE5'
-C_GREEN_DIM = '#D1FAE5'
-C_RED = '#C0392B'
-C_RED_DIM = '#FEE2E2'
-C_AMBER = '#92400E'
-C_AMBER_BG = '#FEF3C7'
-C_BLUE = '#525252'
+# ─── Accent Colors ──────────────────────────────────────────────────────────
+C_PRIMARY = '#3B82F6'
+C_PRIMARY_LIGHT = '#60A5FA'
+C_GREEN = '#4ADE80'
+C_GREEN_BG = 'rgba(74,222,128,0.1)'
+C_GREEN_DIM = 'rgba(74,222,128,0.15)'
+C_RED = '#F87171'
+C_RED_DIM = 'rgba(248,113,113,0.1)'
+C_AMBER = '#FBBF24'
+C_AMBER_BG = 'rgba(251,191,36,0.1)'
+C_BLUE = '#60A5FA'
 
 CHART_COLORS = [
-    '#111111', '#404040', '#737373', '#A3A3A3', '#D4D4D4',
-    '#525252', '#8B8B8B', '#BFBFBF', '#E5E5E5', '#2A2A2A', '#666666',
+    '#3B82F6', '#60A5FA', '#93C5FD', '#6366F1', '#818CF8',
+    '#A78BFA', '#22D3EE', '#2DD4BF', '#4ADE80', '#A1A1AA', '#71717A',
 ]
 
 # Badge color mapping: category → (text_color, bg_color)
 BADGE_STYLES = {
-    'AI Software': ('#525252', '#E5E5E5'),
-    'AI Studio': ('#525252', '#E5E5E5'),
-    'Accounting': ('#525252', '#E5E5E5'),
-    'Insurance': ('#525252', '#E5E5E5'),
-    'Office': ('#525252', '#E5E5E5'),
-    'Miles': ('#525252', '#E5E5E5'),
-    'Education': ('#525252', '#E5E5E5'),
-    'Restaurants': ('#525252', '#E5E5E5'),
-    'Travel Cost': ('#525252', '#E5E5E5'),
-    'Gewerbe': ('#525252', '#E5E5E5'),
-    'Gear': ('#525252', '#E5E5E5'),
-    'Gear Rental': ('#525252', '#E5E5E5'),
-    'Animation': ('#525252', '#E5E5E5'),
-    'Photography': ('#525252', '#E5E5E5'),
-    'Video Production': ('#525252', '#E5E5E5'),
-    'Software': ('#525252', '#E5E5E5'),
+    'AI Software': ('#A1A1AA', '#27272A'),
+    'AI Studio': ('#A1A1AA', '#27272A'),
+    'Accounting': ('#A1A1AA', '#27272A'),
+    'Insurance': ('#A1A1AA', '#27272A'),
+    'Office': ('#A1A1AA', '#27272A'),
+    'Miles': ('#A1A1AA', '#27272A'),
+    'Education': ('#A1A1AA', '#27272A'),
+    'Restaurants': ('#A1A1AA', '#27272A'),
+    'Travel Cost': ('#A1A1AA', '#27272A'),
+    'Gewerbe': ('#A1A1AA', '#27272A'),
+    'Gear': ('#A1A1AA', '#27272A'),
+    'Gear Rental': ('#A1A1AA', '#27272A'),
+    'Animation': ('#A1A1AA', '#27272A'),
+    'Photography': ('#A1A1AA', '#27272A'),
+    'Video Production': ('#A1A1AA', '#27272A'),
+    'Software': ('#A1A1AA', '#27272A'),
 }
 
-FONT = "'Helvetica Neue', Helvetica, Arial, sans-serif"
+FONT = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
 
 # Category → filename code mapping for uploaded expense PDFs
 CATEGORIES = [
@@ -382,22 +368,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ─── Custom CSS (theme-aware) ────────────────────────────────────────────────
+# ─── Custom CSS (dark only) ──────────────────────────────────────────────────
 @st.cache_data(ttl=3600)
-def _build_css(theme_name):
-    """Build the CSS string for a given theme. Cached — only rebuilds on theme change."""
-    t = THEMES[theme_name]
-    is_dark = theme_name == 'dark'
-    positive_color = '#4ADE80' if is_dark else '#065F46'
-    negative_color = '#F87171' if is_dark else '#C0392B'
-    badge_paid_color = '#4ADE80' if is_dark else '#065F46'
-    badge_paid_bg = '#262626' if is_dark else '#D1FAE5'
-    badge_sent_color = '#A3A3A3' if is_dark else '#92400E'
-    badge_sent_bg = '#262626' if is_dark else '#FEF3C7'
-    badge_draft_color = '#737373' if is_dark else '#525252'
-    badge_draft_bg = '#262626' if is_dark else '#E5E5E5'
+def _build_css():
+    """Build the CSS string. Dark-only theme, cached."""
+    t = THEME
     return f"""
 <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
     /* ── Base ── */
     .stApp {{
@@ -428,14 +406,14 @@ def _build_css(theme_name):
         gap: 4px;
         background: {t['surface']};
         border: 1px solid {t['border']};
-        border-radius: 3px;
+        border-radius: 8px;
         padding: 4px;
         border-bottom: none;
     }}
     .stTabs [data-baseweb="tab"] {{
         background: transparent;
         border: none;
-        border-radius: 3px;
+        border-radius: 6px;
         padding: 6px 14px;
         color: {t['text_secondary']};
         font-family: {FONT};
@@ -449,13 +427,13 @@ def _build_css(theme_name):
     }}
     .stTabs [data-baseweb="tab"]:hover {{
         color: {t['text']};
-        background: transparent;
+        background: {t['surface2']};
     }}
     .stTabs [aria-selected="true"] {{
-        background: {t['text']} !important;
-        color: {t['surface']} !important;
+        background: {t['accent']} !important;
+        color: #FFFFFF !important;
         font-weight: 600;
-        border-radius: 3px;
+        border-radius: 6px;
         box-shadow: none;
     }}
     .stTabs [data-baseweb="tab-highlight"] {{
@@ -469,7 +447,7 @@ def _build_css(theme_name):
     .card {{
         background: {t['surface']};
         border: 1px solid {t['border']};
-        border-radius: 3px;
+        border-radius: 8px;
         padding: 20px;
         box-shadow: none;
         transition: border-color 0.2s ease;
@@ -505,16 +483,16 @@ def _build_css(theme_name):
         font-family: {FONT};
         font-weight: 400;
     }}
-    .positive {{ color: {positive_color}; }}
-    .negative {{ color: {negative_color}; }}
-    .accent {{ color: {t['text']}; }}
-    .blue {{ color: {C_BLUE}; }}
+    .positive {{ color: {t['positive']}; }}
+    .negative {{ color: {t['negative']}; }}
+    .accent {{ color: {t['accent_text']}; }}
+    .blue {{ color: {t['accent_text']}; }}
 
     /* ── Chart Containers ── */
     .chart-card {{
         background: {t['surface']};
         border: 1px solid {t['border']};
-        border-radius: 3px;
+        border-radius: 8px;
         padding: 28px;
         margin-bottom: 20px;
         box-shadow: none;
@@ -573,15 +551,15 @@ def _build_css(theme_name):
     .badge {{
         display: inline-block;
         padding: 3px 10px;
-        border-radius: 2px;
+        border-radius: 4px;
         font-size: 11px;
         font-weight: 600;
         letter-spacing: 0.5px;
         text-transform: uppercase;
     }}
-    .badge-paid {{ color: {badge_paid_color}; background: {badge_paid_bg}; }}
-    .badge-sent {{ color: {badge_sent_color}; background: {badge_sent_bg}; }}
-    .badge-draft {{ color: {badge_draft_color}; background: {badge_draft_bg}; }}
+    .badge-paid {{ color: {t['positive']}; background: {t['positive_dim']}; }}
+    .badge-sent {{ color: #FBBF24; background: rgba(251,191,36,0.1); }}
+    .badge-draft {{ color: {t['muted']}; background: {t['surface2']}; }}
 
     /* ── Filter Pills (horizontal radio in dashboard) ── */
     [data-testid="stRadio"] > div[role="radiogroup"] {{
@@ -591,7 +569,7 @@ def _build_css(theme_name):
     [data-testid="stRadio"] > div[role="radiogroup"] > label {{
         background: {t['surface']} !important;
         border: 1px solid {t['border_hover']} !important;
-        border-radius: 3px !important;
+        border-radius: 6px !important;
         padding: 6px 14px !important;
         font-size: 12px !important;
         font-weight: 500;
@@ -604,7 +582,7 @@ def _build_css(theme_name):
         color: {t['text_secondary']} !important;
     }}
     [data-testid="stRadio"] > div[role="radiogroup"] > label:hover {{
-        border-color: {t['text']} !important;
+        border-color: {t['accent']} !important;
         color: {t['text']} !important;
     }}
     [data-testid="stRadio"] > div[role="radiogroup"] > label:hover > div:last-child {{
@@ -612,14 +590,14 @@ def _build_css(theme_name):
     }}
     [data-testid="stRadio"] > div[role="radiogroup"] > label[data-checked="true"],
     [data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) {{
-        background: {t['text']} !important;
-        color: {t['surface']} !important;
-        border-color: {t['text']} !important;
+        background: {t['accent']} !important;
+        color: #FFFFFF !important;
+        border-color: {t['accent']} !important;
         font-weight: 600;
     }}
     [data-testid="stRadio"] > div[role="radiogroup"] > label[data-checked="true"] > div:last-child,
     [data-testid="stRadio"] > div[role="radiogroup"] > label:has(input:checked) > div:last-child {{
-        color: {t['surface']} !important;
+        color: #FFFFFF !important;
     }}
     [data-testid="stRadio"] > div[role="radiogroup"] > label > div:first-child {{
         display: none !important;  /* hide default radio circle */
@@ -634,7 +612,7 @@ def _build_css(theme_name):
 
     /* ── Container borders (form cards) ── */
     [data-testid="stVerticalBlockBorderWrapper"] {{
-        border-radius: 3px !important;
+        border-radius: 8px !important;
         border-color: {t['border']} !important;
     }}
 
@@ -642,16 +620,16 @@ def _build_css(theme_name):
     .progress-bar-bg {{
         width: 100%;
         height: 10px;
-        background: {t['surface3']};
+        background: {t['surface2']};
         border: 1px solid {t['border']};
-        border-radius: 3px;
+        border-radius: 8px;
         overflow: hidden;
         position: relative;
     }}
     .progress-bar-fill {{
         height: 100%;
-        border-radius: 3px;
-        background: {t['text']};
+        border-radius: 8px;
+        background: {t['accent']};
         font-size: 0;
         transition: width 1.5s ease;
     }}
@@ -680,7 +658,7 @@ def _build_css(theme_name):
     .month-card {{
         background: {t['surface']};
         border: 1px solid {t['border']};
-        border-radius: 3px;
+        border-radius: 8px;
         padding: 16px 12px;
         text-align: center;
         box-shadow: none;
@@ -814,15 +792,15 @@ def _build_css(theme_name):
     }}
 
     .stDataFrame {{
-        border-radius: 3px;
+        border-radius: 8px;
         overflow: hidden;
     }}
 
     /* ── Buttons ── */
     .stButton > button {{
-        border-radius: 3px;
+        border-radius: 6px;
         border: 1px solid {t['border_hover']};
-        background: {t['surface']};
+        background: transparent;
         color: {t['text']};
         font-family: {FONT};
         font-weight: 600;
@@ -835,22 +813,21 @@ def _build_css(theme_name):
         box-shadow: none;
     }}
     .stButton > button:hover {{
-        background: {t['surface']};
+        background: {t['surface2']};
         color: {t['text']};
-        border-color: {t['text']};
+        border-color: {t['border_hover']};
     }}
     .stButton > button[kind="primary"] {{
-        background: {t['text']};
-        border: 1px solid {t['text']};
-        color: {t['surface']};
+        background: {t['accent']};
+        border: 1px solid {t['accent']};
+        color: #FFFFFF;
         font-weight: 600;
         box-shadow: none;
     }}
     .stButton > button[kind="primary"]:hover {{
-        background: {t['text']};
-        border-color: {t['text']};
+        background: {t['accent_hover']};
+        border-color: {t['accent_hover']};
         box-shadow: none;
-        opacity: 0.85;
     }}
 
     /* ── Transaction rows ── */
@@ -883,39 +860,24 @@ def _build_css(theme_name):
         font-size: 12px;
         min-height: 0;
         line-height: 1;
-        border-radius: 3px;
+        border-radius: 6px;
     }}
     .tx-del .stButton > button {{
-        border-color: #FEE2E2;
-        color: #C0392B;
+        border-color: {t['negative_dim']};
+        color: {t['negative']};
+        background: transparent;
     }}
     .tx-del .stButton > button:hover {{
-        background: #FEE2E2;
-        border-color: #C0392B;
-        color: #C0392B;
-    }}
-
-    /* ── Theme toggle button ── */
-    .theme-toggle .stButton > button {{
-        border-radius: 3px;
-        padding: 6px 12px;
-        font-size: 13px;
-        min-height: 0;
-        line-height: 1;
-        background: {t['surface2']};
-        border: 1px solid {t['border']};
-        text-transform: none;
-        letter-spacing: 0;
-    }}
-    .theme-toggle .stButton > button:hover {{
-        background: {t['surface3']};
+        background: {t['negative_dim']};
+        border-color: {t['negative']};
+        color: {t['negative']};
     }}
 
     /* ── Dialog ── */
     div[data-testid="stModal"] > div {{
         background: {t['surface']};
         border: 1px solid {t['border']};
-        border-radius: 3px;
+        border-radius: 8px;
     }}
 
     /* ── Inputs ── */
@@ -925,22 +887,22 @@ def _build_css(theme_name):
     .stDateInput > div > div > input {{
         background: {t['surface']};
         border-color: {t['border_hover']};
-        border-radius: 3px;
+        border-radius: 6px;
         color: {t['text']};
         font-family: {FONT};
         font-size: 14px;
     }}
     .stTextInput > div > div > input:focus,
     .stNumberInput > div > div > input:focus {{
-        border-color: {t['text']} !important;
-        box-shadow: none !important;
+        border-color: {t['accent']} !important;
+        box-shadow: 0 0 0 2px {t['accent_dim']} !important;
     }}
 
     /* ── Text area ── */
     .stTextArea textarea {{
         background: {t['surface']};
         border-color: {t['border_hover']};
-        border-radius: 3px;
+        border-radius: 6px;
         color: {t['text']};
         font-family: {FONT};
         font-size: 14px;
@@ -949,7 +911,7 @@ def _build_css(theme_name):
     /* ── Expander ── */
     .streamlit-expanderHeader {{
         background: {t['surface']};
-        border-radius: 3px;
+        border-radius: 8px;
         border: 1px solid {t['border']};
         color: {t['text']};
     }}
@@ -964,6 +926,7 @@ def _build_css(theme_name):
         background: {t['sidebar_bg']} !important;
         min-width: 220px !important;
         max-width: 220px !important;
+        border-right: 1px solid {t['sidebar_border']} !important;
     }}
     [data-testid="stSidebar"] [data-testid="stSidebarContent"] {{
         background: {t['sidebar_bg']} !important;
@@ -984,6 +947,7 @@ def _build_css(theme_name):
         text-transform: none !important;
         min-height: 0 !important;
         line-height: 1.4 !important;
+        transition: all 0.12s ease !important;
     }}
     section[data-testid="stSidebar"] .stButton > button:hover {{
         background: {t['sidebar_hover']} !important;
@@ -992,11 +956,13 @@ def _build_css(theme_name):
     section[data-testid="stSidebar"] .stButton > button:focus {{
         box-shadow: none !important;
     }}
-    /* Active nav button */
+    /* Active nav button — blue accent */
     section[data-testid="stSidebar"] .nav-active .stButton > button {{
-        background: {t['sidebar_hover']} !important;
-        color: {t['sidebar_text']} !important;
-        font-weight: 500 !important;
+        background: {t['sidebar_active_bg']} !important;
+        color: {t['sidebar_active_text']} !important;
+        font-weight: 600 !important;
+        border-left: 2px solid {t['sidebar_active_border']} !important;
+        padding-left: 22px !important;
     }}
     /* Nav item (inactive) - ensure left-alignment */
     section[data-testid="stSidebar"] .nav-item .stButton > button {{
@@ -1012,7 +978,7 @@ def _build_css(theme_name):
         letter-spacing: 0.05em !important;
         text-transform: uppercase !important;
         padding: 8px 12px !important;
-        border-radius: 3px !important;
+        border-radius: 6px !important;
     }}
     section[data-testid="stSidebar"] .sidebar-actions .stButton > button:hover {{
         background: {t['sidebar_hover']} !important;
@@ -1036,7 +1002,7 @@ def _build_css(theme_name):
         }}
         .card {{
             padding: 14px 16px;
-            border-radius: 3px;
+            border-radius: 8px;
         }}
         .card-value {{
             font-size: 1.3rem;
@@ -1052,7 +1018,7 @@ def _build_css(theme_name):
         }}
         .chart-card {{
             padding: 14px;
-            border-radius: 3px;
+            border-radius: 8px;
         }}
         .data-table {{
             font-size: 0.75rem;
@@ -1072,10 +1038,8 @@ def _build_css(theme_name):
 
 
 def _inject_css():
-    """Inject cached theme CSS. Only rebuilds the string when theme changes."""
-    theme_name = st.session_state.get('theme', 'light')
-    css_html = _build_css(theme_name)
-    st.markdown(css_html, unsafe_allow_html=True)
+    """Inject dark theme CSS."""
+    st.markdown(_build_css(), unsafe_allow_html=True)
 
 _inject_css()
 
@@ -1319,9 +1283,9 @@ def gauge_card(label, value, max_val, fmt_value=None, sub=None, color=None):
                 stroke-linecap="round" transform="rotate(-90 60 60)"
                 style="transition: stroke-dashoffset 0.6s ease;"/>
             <text x="60" y="56" text-anchor="middle" fill="{t['text']}"
-                font-size="18" font-weight="700" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">{display}</text>
+                font-size="18" font-weight="700" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif">{display}</text>
             <text x="60" y="74" text-anchor="middle" fill="{t['muted']}"
-                font-size="11" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">{int(pct*100)}%</text>
+                font-size="11" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif">{int(pct*100)}%</text>
         </svg>
         <div class="card-label" style="margin-top:8px;">{label}</div>
         {'<div class="card-sub">'+sub+'</div>' if sub else ''}
@@ -1337,12 +1301,7 @@ def fmt_eur(v):
 
 def badge_html(text, category=None):
     """Generate inline badge span for a category."""
-    t = _t()
-    is_dark = st.session_state.get('theme', 'light') == 'dark'
-    if is_dark:
-        colors = ('#A3A3A3', '#262626')
-    else:
-        colors = BADGE_STYLES.get(category or text, ('#525252', '#E5E5E5'))
+    colors = BADGE_STYLES.get(category or text, ('#A1A1AA', '#27272A'))
     return (f'<span class="badge" style="color:{colors[0]};background:{colors[1]}">'
             f'{text}</span>')
 
@@ -1953,7 +1912,7 @@ def tab_goal(data):
             x=labels, y=cum_vals, mode='lines+markers', name='Cumulative Income',
             line=dict(color=_chart_primary(), width=3),
             marker=dict(size=6, color=_chart_primary()),
-            fill='tozeroy', fillcolor='rgba(17,17,17,0.06)' if st.session_state.get('theme', 'light') == 'light' else 'rgba(240,240,240,0.06)',
+            fill='tozeroy', fillcolor='rgba(59,130,246,0.08)',
             connectgaps=False,
         ))
         fig.add_trace(go.Scatter(
@@ -2097,7 +2056,7 @@ def tab_taxes(data):
         """, unsafe_allow_html=True)
     with tk4:
         st.markdown(f"""
-        <div class="card" style="border-left: 3px solid {_t()['text']};">
+        <div class="card" style="border-left: 3px solid {_t()['accent']};">
             <div class="card-label">After-Tax Estimate</div>
             <div class="card-value {'positive' if after_tax >= 0 else 'negative'}">{fmt_eur(after_tax)}</div>
             <div class="card-sub">Total tax burden: {fmt_eur(total_tax_burden)}</div>
@@ -2202,7 +2161,7 @@ def tab_taxes(data):
             """, unsafe_allow_html=True)
         with pk4:
             st.markdown(f"""
-            <div class="card" style="border-left: 3px solid {_t()['text']};">
+            <div class="card" style="border-left: 3px solid {_t()['accent']};">
                 <div class="card-label">Total Tax Burden (Projected)</div>
                 <div class="card-value negative">{fmt_eur(proj_total_tax)}</div>
                 <div class="card-sub">Income tax + VAT for full year</div>
@@ -2211,7 +2170,7 @@ def tab_taxes(data):
 
     # --- Tax rates info ---
     st.markdown(f"""
-    <div style="margin-top:1.5rem;padding:0.8rem 1rem;background:{_t()["surface2"]};border-radius:3px;
+    <div style="margin-top:1.5rem;padding:0.8rem 1rem;background:{_t()["surface2"]};border-radius:8px;
                 border:1px solid {_t()["border"]};font-size:0.78rem;color:{_t()["muted"]}">
         <strong style="color:{_t()["text"]}">Tax Rates Used:</strong>
         Income Tax: {TAX_RATE_INCOME:.0%} (combined Einkommensteuer + Soli) &middot;
@@ -4010,7 +3969,7 @@ def sync_invoices_dialog():
         return
 
     _card = (f'background:{_t()["surface"]};border:1px solid {_t()["border"]};'
-             f'border-radius:3px;padding:1rem;margin-bottom:0.5rem;'
+             f'border-radius:8px;padding:1rem;margin-bottom:0.5rem;'
              f'box-shadow:none')
 
     st.markdown(f"**Found {len(all_changes)} change(s)**")
@@ -4173,10 +4132,6 @@ def sync_invoices_dialog():
 def main():
     data = load_data()
 
-    # ── Theme Toggle ──
-    if 'theme' not in st.session_state:
-        st.session_state['theme'] = 'light'
-
     # ── Header ──
     today = datetime.now()
     t = _t()
@@ -4232,17 +4187,10 @@ def main():
         for page_name in OVERVIEW_PAGES:
             _sidebar_nav_item(page_name)
 
-        # Bottom section: theme toggle + date
-        st.markdown(f'<div style="border-top:1px solid {t["sidebar_border"]};margin:20px 0 0 0;padding-top:12px"></div>', unsafe_allow_html=True)
-
-        theme_label = "Light Mode" if st.session_state.get('theme', 'light') == 'dark' else "Dark Mode"
-        def _toggle_theme():
-            st.session_state['theme'] = 'dark' if st.session_state.get('theme', 'light') == 'light' else 'light'
-        st.button(theme_label, key='sidebar_theme_toggle', use_container_width=True,
-                  on_click=_toggle_theme)
-
+        # Bottom section: date
         st.markdown(f'''
-            <div style="padding:8px 24px;font-size:11px;color:{t['sidebar_text_dim']};font-family:{FONT}">
+            <div style="border-top:1px solid {t['sidebar_border']};margin:20px 0 0 0;
+                        padding:12px 24px 8px;font-size:11px;color:{t['sidebar_text_dim']};font-family:{FONT}">
                 {today.strftime('%d.%m.%Y')}
             </div>
         ''', unsafe_allow_html=True)
@@ -4277,9 +4225,9 @@ def main():
             parts.append(f"{n_miss_exp} removed expense{'s' if n_miss_exp > 1 else ''}")
         summary = ", ".join(parts)
         st.markdown(f"""
-        <div style="background:{t['surface3']};border:1px solid {t['border']};
-                    border-radius:3px;padding:0.6rem 1rem;margin-bottom:0.75rem;
-                    font-size:0.85rem;color:{_t()["text"]}">
+        <div style="background:{t['accent_dim']};border:1px solid rgba(59,130,246,0.2);
+                    border-radius:8px;padding:0.6rem 1rem;margin-bottom:0.75rem;
+                    font-size:0.85rem;color:{t['accent_text']}">
             <strong>{len(auto_changes)} change{'s' if len(auto_changes) > 1 else ''} detected:</strong>
             {summary}. Click <strong>Update</strong> to review and apply.
         </div>
@@ -4324,7 +4272,7 @@ def main():
                 log_html += (
                     f'<div style="padding:0.25rem 0;border-bottom:1px solid {_lt["row_border"]}">'
                     f'<span style="color:{_lt["text_secondary"]}">{entry["timestamp"]}</span> '
-                    f'<span style="color:{_lt["text"]};font-weight:600">{entry["action"]}</span> '
+                    f'<span style="color:{_lt["accent_text"]};font-weight:600">{entry["action"]}</span> '
                     f'<span>{entry["details"]}</span></div>'
                 )
             log_html += '</div>'
@@ -4333,7 +4281,7 @@ def main():
     # ── Footer ──
     st.markdown(f"""
     <div class="js-footer">
-        JOSEF SINDELKA — FINANCE DASHBOARD 2026 — DATA AUTO-REFRESHES EVERY 5 MIN
+        JOSEF SINDELKA — FINANCE DASHBOARD 2026 — DATA AUTO-REFRESHES EVERY 10 MIN
     </div>
     """, unsafe_allow_html=True)
 

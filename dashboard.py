@@ -3918,6 +3918,7 @@ def edit_expense_dialog(expense):
                     st.error("Could not find the expense row in the spreadsheet.")
 
 
+@st.dialog("Update — Sync Changes", width="large")
 def sync_invoices_dialog():
     """Scan invoices and cost folders for changes and sync with spreadsheet."""
     with st.spinner("Scanning Google Drive for changes..."):

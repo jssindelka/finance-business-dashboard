@@ -1727,6 +1727,7 @@ def tab_income(data):
         section_title('Unpaid Invoices')
 
         st.markdown("""<div class="tx-header">
+            <span style="flex:0.3">&#35;</span>
             <span style="flex:0.7">INVOICE</span>
             <span style="flex:0.7">DATE</span>
             <span style="flex:1.2">CLIENT</span>
@@ -1737,7 +1738,7 @@ def tab_income(data):
         </div>""", unsafe_allow_html=True)
 
         _cs2 = f'font-size:0.82rem;color:{_t()["text"]};padding:0.3rem 0;font-family:{FONT};'
-        for _, r in unpaid.iterrows():
+        for idx, (_, r) in enumerate(unpaid.iterrows(), 1):
             date_str = ''
             if 'Date' in r.index and pd.notna(r['Date']):
                 try:
@@ -1752,25 +1753,27 @@ def tab_income(data):
             cat_name = str(r.get('Category', ''))
             netto = pd.to_numeric(r.get('Netto (€)', 0), errors='coerce')
 
-            cols = st.columns([0.7, 0.7, 1.2, 1.0, 0.9, 0.6, 0.6, 0.6])
+            cols = st.columns([0.3, 0.7, 0.7, 1.2, 1.0, 0.9, 0.6, 0.6, 0.6])
             with cols[0]:
-                st.markdown(f'<div style="{_cs2}">{inv_num}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="{_cs2}color:{_t()["text_secondary"]}">{idx}</div>', unsafe_allow_html=True)
             with cols[1]:
-                st.markdown(f'<div style="{_cs2}">{date_str}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="{_cs2}">{inv_num}</div>', unsafe_allow_html=True)
             with cols[2]:
-                st.markdown(f'<div style="{_cs2}">{client}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="{_cs2}">{date_str}</div>', unsafe_allow_html=True)
             with cols[3]:
-                st.markdown(f'<div style="{_cs2}">{project}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="{_cs2}">{client}</div>', unsafe_allow_html=True)
             with cols[4]:
-                st.markdown(f'<div style="{_cs2}">{badge_html(cat_name, cat_name)}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="{_cs2}">{project}</div>', unsafe_allow_html=True)
             with cols[5]:
-                st.markdown(f'<div style="{_cs2}text-align:right;font-weight:600">{fmt_eur(netto) if not pd.isna(netto) else ""}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="{_cs2}">{badge_html(cat_name, cat_name)}</div>', unsafe_allow_html=True)
             with cols[6]:
+                st.markdown(f'<div style="{_cs2}text-align:right;font-weight:600">{fmt_eur(netto) if not pd.isna(netto) else ""}</div>', unsafe_allow_html=True)
+            with cols[7]:
                 st.markdown('<div class="tx-actions">', unsafe_allow_html=True)
                 if st.button("Mark Paid", key=f"paid_{inv_num}"):
                     mark_invoice_paid_dialog(r.to_dict())
                 st.markdown('</div>', unsafe_allow_html=True)
-            with cols[7]:
+            with cols[8]:
                 st.markdown('<div class="tx-actions tx-del">', unsafe_allow_html=True)
                 if st.button("Delete", key=f"del_unpaid_{inv_num}"):
                     delete_income_invoice_dialog(r.to_dict(), 'unpaid')

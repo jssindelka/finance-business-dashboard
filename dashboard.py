@@ -132,6 +132,9 @@ CATEGORY_FILE_MAP = {
     'Miles': 'Miles', 'Education': 'Education', 'Gear Rental': 'Gear_Rental',
     'Travel Cost': 'Travel_Cost', 'Gewerbe': 'Gewerbe',
 }
+INCOME_CATEGORIES = [
+    'Photography', 'Animation', 'AI Studio', 'Video Editing',
+]
 YEAR_FOLDER = str(CURRENT_YEAR)
 INVOICES_FOLDER = f"INVOICES {CURRENT_YEAR}"
 # Jan/Feb 2026 used 03_Regular Cost + 04_Irregular Cost subfolders.
@@ -208,7 +211,11 @@ def _get_google_creds():
     ]
 
     # ── Streamlit Cloud: read credentials from st.secrets ──
-    if 'google_credentials' in st.secrets:
+    try:
+        _has_secrets = 'google_credentials' in st.secrets
+    except FileNotFoundError:
+        _has_secrets = False
+    if _has_secrets:
         sec = st.secrets['google_credentials']
         # Manual token exchange to guarantee a fresh access token
         import urllib.request, urllib.parse
@@ -251,7 +258,11 @@ def _get_google_creds():
 @st.cache_resource(ttl=2400)
 def _get_gspread_client():
     creds = _get_google_creds()
-    if 'google_credentials' in st.secrets:
+    try:
+        _has_cloud_secrets = 'google_credentials' in st.secrets
+    except FileNotFoundError:
+        _has_cloud_secrets = False
+    if _has_cloud_secrets:
         # Cloud: build client with explicit auth header to avoid
         # AuthorizedSession not attaching the token on Python 3.13
         import requests as _req
@@ -388,7 +399,7 @@ def _build_css():
     }}
 
     .stMainBlockContainer {{
-        max-width: 1100px;
+        max-width: 1300px;
         padding: 40px 48px;
     }}
 
@@ -861,6 +872,13 @@ def _build_css():
         min-height: 0;
         line-height: 1;
         border-radius: 6px;
+        cursor: pointer;
+        transition: background 0.15s ease, border-color 0.15s ease;
+    }}
+    .tx-actions .stButton > button:hover {{
+        background: {t['accent_dim']};
+        border-color: {t['accent']};
+        color: {t['accent_text']};
     }}
     .tx-del .stButton > button {{
         border-color: {t['negative_dim']};
@@ -871,6 +889,70 @@ def _build_css():
         background: {t['negative_dim']};
         border-color: {t['negative']};
         color: {t['negative']};
+    }}
+
+    /* ── Mobile card rows (hidden on desktop, shown on mobile) ── */
+    .mobile-card {{
+        display: none;
+    }}
+    @media (max-width: 768px) {{
+        .mobile-card {{
+            display: block;
+            background: {t['surface']};
+            border: 1px solid {t['border']};
+            border-radius: 8px;
+            padding: 14px 16px;
+            margin-bottom: 8px;
+        }}
+        .mobile-card .mc-row {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 3px 0;
+            font-family: {FONT};
+            font-size: 0.82rem;
+        }}
+        .mobile-card .mc-label {{
+            color: {t['muted']};
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 600;
+        }}
+        .mobile-card .mc-value {{
+            color: {t['text']};
+            font-weight: 500;
+        }}
+        .mobile-card .mc-title {{
+            font-weight: 700;
+            font-size: 0.9rem;
+            color: {t['text']};
+            margin-bottom: 4px;
+            font-family: {FONT};
+        }}
+        .mobile-card .mc-amount {{
+            font-weight: 700;
+            font-size: 1rem;
+            color: {t['accent_text']};
+            font-family: {FONT};
+            font-variant-numeric: tabular-nums;
+        }}
+        .mobile-card .mc-actions {{
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid {t['border']};
+        }}
+        /* Hide desktop column rows on mobile */
+        .desktop-row {{
+            display: none !important;
+        }}
+    }}
+    @media (min-width: 769px) {{
+        .mobile-card {{
+            display: none !important;
+        }}
     }}
 
     /* ── Dialog ── */
@@ -996,41 +1078,135 @@ def _build_css():
     }}
 
     /* ── Mobile Responsive (iPhone 16/17 Pro = 393px) ── */
-    @media (max-width: 480px) {{
+    /* ── Tablet (≤768px) ── */
+    @media (max-width: 768px) {{
         .stMainBlockContainer {{
-            padding: 0.5rem 0.75rem;
+            padding: 24px 20px;
         }}
-        .card {{
-            padding: 14px 16px;
-            border-radius: 8px;
+        [data-testid="stSidebar"] {{
+            min-width: 200px !important;
+            max-width: 200px !important;
         }}
         .card-value {{
-            font-size: 1.3rem;
+            font-size: 1.4rem;
         }}
+        .chart-card {{
+            padding: 18px;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }}
+        .data-table {{
+            min-width: 500px;
+        }}
+        .tx-header {{
+            display: none !important;
+        }}
+    }}
+
+    /* ── Mobile (≤480px) ── */
+    @media (max-width: 480px) {{
+        .stMainBlockContainer {{
+            padding: 12px 10px;
+        }}
+
+        /* Sidebar */
+        [data-testid="stSidebar"] {{
+            min-width: 180px !important;
+            max-width: 180px !important;
+        }}
+        section[data-testid="stSidebar"] .stButton > button {{
+            font-size: 12px !important;
+            padding: 8px 16px !important;
+        }}
+
+        /* Cards */
+        .card {{
+            padding: 12px 14px;
+            border-radius: 6px;
+        }}
+        .card-label {{
+            font-size: 10px;
+        }}
+        .card-value {{
+            font-size: 1.15rem;
+        }}
+        .card-sub {{
+            font-size: 11px;
+        }}
+
+        /* Charts */
+        .chart-card {{
+            padding: 12px;
+            border-radius: 6px;
+        }}
+        .chart-title {{
+            font-size: 10px;
+        }}
+
+        /* Tables */
+        .data-table {{
+            font-size: 0.72rem;
+        }}
+        .data-table th, .data-table td {{
+            padding: 0.5rem 0.4rem;
+        }}
+        .data-table th {{
+            font-size: 9px;
+        }}
+
+        /* Month grid */
+        .month-grid, .month-grid-2 {{
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.5rem;
+        }}
+        .month-card {{
+            padding: 10px 8px;
+        }}
+        .month-card .m-value {{
+            font-size: 12px;
+        }}
+
+        /* Columns stack vertically */
+        [data-testid="column"] {{
+            min-width: 100% !important;
+        }}
+
+        /* Hide custom flex table headers on mobile */
+        .tx-header {{
+            display: none !important;
+        }}
+
+        /* Progress bar milestones */
+        .goal-milestones {{
+            font-size: 9px;
+        }}
+
+        /* Gauge card SVG */
+        .card svg {{
+            max-width: 100px;
+        }}
+
+        /* Tabs */
         .stTabs [data-baseweb="tab-list"] {{
             overflow-x: auto;
             flex-wrap: nowrap;
+            -webkit-overflow-scrolling: touch;
         }}
         .stTabs [data-baseweb="tab"] {{
-            font-size: 0.65rem;
-            padding: 6px 12px;
+            font-size: 0.6rem;
+            padding: 5px 10px;
             white-space: nowrap;
         }}
-        .chart-card {{
-            padding: 14px;
-            border-radius: 8px;
+
+        /* Buttons */
+        .tx-actions .stButton > button {{
+            padding: 4px 8px;
+            font-size: 11px;
         }}
-        .data-table {{
+
+        /* Summary row */
+        .summary-row {{
             font-size: 0.75rem;
-        }}
-        .data-table th, .data-table td {{
-            padding: 0.6rem 0.5rem;
-        }}
-        .month-grid {{
-            grid-template-columns: repeat(2, 1fr);
-        }}
-        [data-testid="column"] {{
-            min-width: 100% !important;
         }}
     }}
 </style>
@@ -1052,28 +1228,48 @@ def _invalidate_data_caches():
     load_data.clear()
     _auto_scan_changes.clear()
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=1800)
 def load_data():
-    """Load all data from Google Sheets with 10-min cache."""
+    """Load all data from Google Sheets with 30-min cache (single batch API call)."""
     try:
         sh = _gsheet()
     except Exception as e:
         st.error(f"Cannot connect to Google Sheet: {type(e).__name__}: {e}")
         st.stop()
 
-    data = {}
-
-    # 1. EXPENSES — clean tabular structure
-    # Retry once on APIError (stale cached auth token)
+    # ── Single batch fetch for all 4 sheets ──
+    sheet_ranges = ['Expenses', 'Income', 'Goal Tracker', '2025']
     try:
-        ws_exp = sh.worksheet('Expenses')
+        batch_resp = sh.values_batch_get(sheet_ranges)
     except gspread.exceptions.APIError:
         _gsheet.clear()
         _get_gspread_client.clear()
         sh = _gsheet()
-        ws_exp = sh.worksheet('Expenses')
-    exp_records = ws_exp.get_all_records()
-    expenses = pd.DataFrame(exp_records)
+        batch_resp = sh.values_batch_get(sheet_ranges)
+
+    value_ranges = batch_resp.get('valueRanges', [])
+    raw = {}
+    for vr in value_ranges:
+        # range comes back as "'Sheet Name'!A:Z" or "Sheet!A:Z"
+        rng = vr.get('range', '')
+        name = rng.split('!')[0].strip("'")
+        raw[name] = vr.get('values', [])
+
+    data = {}
+
+    # 1. EXPENSES — clean tabular structure
+    exp_vals = raw.get('Expenses', [])
+    if exp_vals:
+        exp_headers = exp_vals[0]
+        exp_rows = exp_vals[1:]
+        # Pad short rows to match header length
+        n_cols = len(exp_headers)
+        exp_rows = [r + [''] * (n_cols - len(r)) for r in exp_rows]
+        expenses = pd.DataFrame(exp_rows, columns=exp_headers)
+        # Drop fully empty rows
+        expenses = expenses[expenses.apply(lambda r: any(str(v).strip() for v in r), axis=1)]
+    else:
+        expenses = pd.DataFrame()
     expenses['Netto (€)'] = pd.to_numeric(
         expenses.get('Netto (€)', pd.Series(dtype=float)).apply(_clean_currency), errors='coerce'
     ).fillna(0)
@@ -1085,17 +1281,17 @@ def load_data():
     data['expenses'] = expenses
 
     # 2. INCOME — complex structure (paid + unpaid sections)
-    ws_inc = sh.worksheet('Income')
-    inc_vals = ws_inc.get_all_values()
+    inc_vals = raw.get('Income', [])
     if inc_vals:
         inc_headers = inc_vals[0]
-        inc_df = pd.DataFrame(inc_vals[1:], columns=inc_headers)
-        # Parse Date column
+        inc_rows = inc_vals[1:]
+        n_cols = len(inc_headers)
+        inc_rows = [r + [''] * (n_cols - len(r)) for r in inc_rows]
+        inc_df = pd.DataFrame(inc_rows, columns=inc_headers)
         if 'Date' in inc_df.columns:
             inc_df['Date'] = pd.to_datetime(inc_df['Date'], dayfirst=True, errors='coerce')
         data['income_paid'] = _parse_income_section(inc_df, 0)
         data['income_unpaid'] = _parse_income_section(inc_df, 1)
-        # Clean currency-formatted strings in Netto/Brutto columns
         for key in ('income_paid', 'income_unpaid'):
             df_inc = data[key]
             if len(df_inc):
@@ -1108,12 +1304,20 @@ def load_data():
         data['income_paid'] = pd.DataFrame()
         data['income_unpaid'] = pd.DataFrame()
 
-    # 3. OVERVIEW — Compute from raw data
+    # 3. OVERVIEW — Compute from raw data (income by payment month, not creation month)
     exp_by_month = expenses.groupby('Month')['Netto (€)'].sum()
     paid = data['income_paid']
     inc_by_month = pd.Series(dtype=float)
-    if len(paid) and 'Month' in paid.columns:
-        inc_by_month = paid['Netto (€)'].groupby(paid['Month']).sum()
+    if len(paid) and 'Netto (€)' in paid.columns:
+        p = paid.copy()
+        # Use Date Paid month if available, otherwise fall back to creation Month
+        if 'Date Paid' in p.columns:
+            dp = pd.to_datetime(p['Date Paid'].apply(_clean_currency), dayfirst=True, errors='coerce')
+            p['_pay_month'] = dp.dt.month.map(lambda m: MONTHS[int(m) - 1] if pd.notna(m) else None)
+            p['_pay_month'] = p['_pay_month'].fillna(p.get('Month', ''))
+        else:
+            p['_pay_month'] = p['Month']
+        inc_by_month = p.groupby('_pay_month')['Netto (€)'].sum()
     overview_rows = []
     for m in MONTHS:
         inc = inc_by_month.get(m, 0.0)
@@ -1122,20 +1326,12 @@ def load_data():
     data['overview'] = pd.DataFrame(overview_rows)
 
     # 4. GOAL TRACKER
-    try:
-        ws_goal = sh.worksheet('Goal Tracker')
-        goal_vals = ws_goal.get_all_values()
-        data['goal_raw'] = pd.DataFrame(goal_vals) if goal_vals else None
-    except Exception:
-        data['goal_raw'] = None
+    goal_vals = raw.get('Goal Tracker', [])
+    data['goal_raw'] = pd.DataFrame(goal_vals) if goal_vals else None
 
     # 5. 2025 reference data
-    try:
-        ws_2025 = sh.worksheet('2025')
-        vals_2025 = ws_2025.get_all_values()
-        data['hist_2025'] = pd.DataFrame(vals_2025) if vals_2025 else None
-    except Exception:
-        data['hist_2025'] = None
+    vals_2025 = raw.get('2025', [])
+    data['hist_2025'] = pd.DataFrame(vals_2025) if vals_2025 else None
 
     return data
 
@@ -1329,6 +1525,21 @@ def html_table(headers, rows, num_cols=None):
     return html
 
 
+def mobile_card_html(title, amount, fields, amount_class=''):
+    """Render a mobile-only card for transaction rows.
+    fields: list of (label, value) tuples."""
+    t = _t()
+    rows_html = ''
+    for label, value in fields:
+        rows_html += f'<div class="mc-row"><span class="mc-label">{label}</span><span class="mc-value">{value}</span></div>'
+    cls = f'color:{t["negative"]}' if 'negative' in amount_class else ''
+    return f'''<div class="mobile-card">
+        <div class="mc-title">{title}</div>
+        <div class="mc-amount" style="{cls}">{amount}</div>
+        {rows_html}
+    </div>'''
+
+
 def chart_card_html(title, content_html):
     """Render a chart-card with title and HTML content in a single markdown block."""
     st.markdown(f"""
@@ -1375,6 +1586,69 @@ def tab_overview(data):
             <div class="card-sub">Net result YTD</div>
         </div>
         """, unsafe_allow_html=True)
+
+    # --- Unpaid Invoices Summary + Income vs Expenses Chart ---
+    unpaid = data.get('income_unpaid', pd.DataFrame())
+    total_unpaid = pd.to_numeric(unpaid.get('Netto (€)', pd.Series(dtype=float)), errors='coerce').sum() if len(unpaid) else 0
+    num_unpaid = len(unpaid)
+
+    ov_left, ov_right = st.columns([1, 1])
+
+    with ov_left:
+        # Unpaid invoices card
+        if num_unpaid > 0:
+            unpaid_lines = ''
+            for _, ur in unpaid.iterrows():
+                u_client = str(ur.get('Client', ''))
+                u_amt = pd.to_numeric(ur.get('Netto (€)', 0), errors='coerce')
+                unpaid_lines += (
+                    f'<div style="display:flex;justify-content:space-between;padding:6px 0;'
+                    f'border-bottom:1px solid {_t()["row_border"]};font-size:0.82rem;font-family:{FONT}">'
+                    f'<span style="color:{_t()["text"]}">{u_client}</span>'
+                    f'<span style="color:{_t()["negative"]};font-weight:600">{fmt_eur(u_amt)}</span></div>'
+                )
+            st.markdown(f"""
+            <div class="chart-card">
+                <div class="chart-title">Unpaid Invoices</div>
+                <div style="font-size:1.5rem;font-weight:700;color:{_t()["negative"]};font-family:{FONT};margin-bottom:8px">
+                    {fmt_eur(total_unpaid)}</div>
+                <div style="color:{_t()["text_secondary"]};font-size:0.78rem;margin-bottom:12px;font-family:{FONT}">
+                    {num_unpaid} invoice{'s' if num_unpaid != 1 else ''} outstanding</div>
+                {unpaid_lines}
+            </div>""", unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div class="chart-card">
+                <div class="chart-title">Unpaid Invoices</div>
+                <div style="font-size:1.1rem;font-weight:600;color:{_t()["positive"]};font-family:{FONT}">
+                    All invoices are paid!</div>
+            </div>""", unsafe_allow_html=True)
+
+    with ov_right:
+        # Income vs Expenses bar chart
+        section_title('Income vs Expenses')
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=active['Month'].str[:3], y=active['Income'],
+            name='Income', marker_color=_chart_primary(),
+            marker=dict(cornerradius=4),
+            text=[fmt_eur(v) for v in active['Income']],
+            textposition='outside', textfont=dict(color=_t()['text'], size=10, family=FONT),
+        ))
+        fig.add_trace(go.Bar(
+            x=active['Month'].str[:3], y=active['Expenses'],
+            name='Expenses', marker_color=_t()['negative'],
+            marker=dict(cornerradius=4),
+            text=[fmt_eur(v) for v in active['Expenses']],
+            textposition='outside', textfont=dict(color=_t()['text'], size=10, family=FONT),
+        ))
+        chart_layout(fig, height=300)
+        fig.update_layout(
+            barmode='group', showlegend=True,
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5),
+            margin=dict(l=20, r=20, t=50, b=30),
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
     # --- Monthly Breakdown Table ---
     rows = []
@@ -1513,15 +1787,6 @@ def tab_expenses(data):
     if filter_month != 'All Months':
         filtered_df = filtered_df[filtered_df['Month'] == filter_month]
 
-    st.markdown("""<div class="tx-header">
-        <span style="flex:0.4">&#35;</span>
-        <span style="flex:1.2">DATE</span>
-        <span style="flex:2.2">RECIPIENT</span>
-        <span style="flex:1.8">CATEGORY</span>
-        <span style="flex:1.4;text-align:right">AMOUNT</span>
-        <span style="flex:1.6;text-align:center">ACTIONS</span>
-    </div>""", unsafe_allow_html=True)
-
     sorted_exp = filtered_df.sort_values('Date of Payment', ascending=False).reset_index(drop=True)
     total_count = len(sorted_exp)
 
@@ -1531,7 +1796,24 @@ def tab_expenses(data):
     page = st.session_state.get('exp_page', 0)
     page = min(page, total_pages - 1)
     start_idx = page * PAGE_SIZE
-    page_df = sorted_exp.iloc[start_idx:start_idx + PAGE_SIZE]
+    end_idx = min(start_idx + PAGE_SIZE, total_count)
+    page_df = sorted_exp.iloc[start_idx:end_idx]
+
+    # Pagination info at top
+    if total_count > PAGE_SIZE:
+        st.markdown(
+            f'<div style="text-align:right;color:{_t()["text_secondary"]};font-size:0.78rem;padding:4px 0 8px;font-family:{FONT}">'
+            f'Showing {start_idx + 1}\u2013{end_idx} of {total_count} expenses</div>',
+            unsafe_allow_html=True)
+
+    st.markdown("""<div class="tx-header">
+        <span style="flex:0.4">&#35;</span>
+        <span style="flex:1.2">DATE</span>
+        <span style="flex:2.2">RECIPIENT</span>
+        <span style="flex:1.8">CATEGORY</span>
+        <span style="flex:1.4;text-align:right">AMOUNT</span>
+        <span style="flex:1.6;text-align:center">ACTIONS</span>
+    </div>""", unsafe_allow_html=True)
 
     for idx, (_, r) in enumerate(page_df.iterrows(), start_idx + 1):
         display_num = total_count - idx + 1
@@ -1545,7 +1827,15 @@ def tab_expenses(data):
         cat_name = str(r.get('Category', ''))
         inv_id = int(r.get('Invoice-ID', idx))
         amount_str = fmt_eur(r['Netto (€)'])
+        recipient = str(r.get('Recipient', ''))
 
+        # Mobile card (hidden on desktop via CSS)
+        st.markdown(mobile_card_html(
+            title=recipient, amount=amount_str,
+            fields=[('Date', date_str), ('Category', cat_name)],
+        ), unsafe_allow_html=True)
+
+        # Desktop columns (hidden on mobile via CSS)
         cols = st.columns([0.4, 1.2, 2.2, 1.8, 1.4, 0.8, 0.8])
         cell_style = f'font-size:0.82rem;color:{_t()["text"]};padding:0.3rem 0;font-family:{FONT};'
         with cols[0]:
@@ -1553,7 +1843,7 @@ def tab_expenses(data):
         with cols[1]:
             st.markdown(f'<div style="{cell_style}">{date_str}</div>', unsafe_allow_html=True)
         with cols[2]:
-            st.markdown(f'<div style="{cell_style}">{r.get("Recipient", "")}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="{cell_style}">{recipient}</div>', unsafe_allow_html=True)
         with cols[3]:
             st.markdown(f'<div style="{cell_style}">{badge_html(cat_name, cat_name)}</div>', unsafe_allow_html=True)
         with cols[4]:
@@ -1672,14 +1962,14 @@ def tab_income(data):
 
         st.markdown("""<div class="tx-header">
             <span style="flex:0.3">&#35;</span>
-            <span style="flex:0.7">INVOICE</span>
-            <span style="flex:0.7">DATE</span>
-            <span style="flex:1.2">CLIENT</span>
-            <span style="flex:1.0">PROJECT</span>
-            <span style="flex:0.9">CATEGORY</span>
+            <span style="flex:0.6">INVOICE</span>
+            <span style="flex:0.6">CREATED</span>
+            <span style="flex:0.6">PAID</span>
+            <span style="flex:1.0">CLIENT</span>
+            <span style="flex:1.2">PROJECT</span>
+            <span style="flex:0.7">CATEGORY</span>
             <span style="flex:0.6;text-align:right">NETTO</span>
             <span style="flex:0.6;text-align:right">BRUTTO</span>
-            <span style="flex:0.6;text-align:center">ACTION</span>
         </div>""", unsafe_allow_html=True)
 
         _cs = f'font-size:0.82rem;color:{_t()["text"]};padding:0.3rem 0;font-family:{FONT};'
@@ -1692,6 +1982,14 @@ def tab_income(data):
                 except Exception:
                     date_str = str(r['Date'])
 
+            date_paid_str = ''
+            if 'Date Paid' in r.index and pd.notna(r.get('Date Paid')) and str(r.get('Date Paid', '')).strip():
+                try:
+                    dtp = pd.to_datetime(r['Date Paid'], dayfirst=True)
+                    date_paid_str = dtp.strftime('%d.%m.%Y')
+                except Exception:
+                    date_paid_str = str(r['Date Paid'])
+
             inv_num = str(r.get('Invoice Number', ''))
             client = str(r.get('Client', ''))
             project = str(r.get('Project', ''))
@@ -1699,7 +1997,15 @@ def tab_income(data):
             netto = pd.to_numeric(r.get('Netto (€)', 0), errors='coerce')
             brutto = pd.to_numeric(r.get('Brutto (€)', 0), errors='coerce')
 
-            cols = st.columns([0.3, 0.7, 0.7, 1.2, 1.0, 0.9, 0.6, 0.6, 0.6])
+            # Mobile card
+            st.markdown(mobile_card_html(
+                title=f'{inv_num} — {client}',
+                amount=fmt_eur(netto) if not pd.isna(netto) else '',
+                fields=[('Project', project), ('Created', date_str), ('Paid', date_paid_str or '—'), ('Category', cat_name)],
+            ), unsafe_allow_html=True)
+
+            # Desktop columns
+            cols = st.columns([0.3, 0.6, 0.6, 0.6, 1.0, 1.2, 0.7, 0.6, 0.6])
             with cols[0]:
                 st.markdown(f'<div style="{_cs}color:{_t()["text_secondary"]}">{idx}</div>', unsafe_allow_html=True)
             with cols[1]:
@@ -1707,20 +2013,20 @@ def tab_income(data):
             with cols[2]:
                 st.markdown(f'<div style="{_cs}">{date_str}</div>', unsafe_allow_html=True)
             with cols[3]:
-                st.markdown(f'<div style="{_cs}">{client}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="{_cs}color:{_t()["positive"]}">{date_paid_str}</div>', unsafe_allow_html=True)
             with cols[4]:
-                st.markdown(f'<div style="{_cs}">{project}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="{_cs}">{client}</div>', unsafe_allow_html=True)
             with cols[5]:
-                st.markdown(f'<div style="{_cs}">{badge_html(cat_name, cat_name)}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="{_cs}color:{_t()["text_secondary"]}">{project}</div>', unsafe_allow_html=True)
             with cols[6]:
-                st.markdown(f'<div style="{_cs}text-align:right;font-weight:600">{fmt_eur(netto) if not pd.isna(netto) else ""}</div>', unsafe_allow_html=True)
-            with cols[7]:
-                st.markdown(f'<div style="{_cs}text-align:right;font-weight:600">{fmt_eur(brutto) if not pd.isna(brutto) else ""}</div>', unsafe_allow_html=True)
-            with cols[8]:
-                st.markdown('<div class="tx-actions tx-del">', unsafe_allow_html=True)
-                if st.button("Delete", key=f"del_paid_{inv_num}"):
-                    delete_income_invoice_dialog(r.to_dict(), 'paid')
+                st.markdown('<div class="tx-actions">', unsafe_allow_html=True)
+                if st.button(cat_name, key=f"cat_paid_{inv_num}"):
+                    edit_invoice_category_dialog(r.to_dict(), 'paid')
                 st.markdown('</div>', unsafe_allow_html=True)
+            with cols[7]:
+                st.markdown(f'<div style="{_cs}text-align:right;font-weight:600">{fmt_eur(netto) if not pd.isna(netto) else ""}</div>', unsafe_allow_html=True)
+            with cols[8]:
+                st.markdown(f'<div style="{_cs}text-align:right;font-weight:600">{fmt_eur(brutto) if not pd.isna(brutto) else ""}</div>', unsafe_allow_html=True)
 
     # --- Unpaid Invoices Table ---
     if len(unpaid):
@@ -1728,13 +2034,13 @@ def tab_income(data):
 
         st.markdown("""<div class="tx-header">
             <span style="flex:0.3">&#35;</span>
-            <span style="flex:0.7">INVOICE</span>
-            <span style="flex:0.7">DATE</span>
-            <span style="flex:1.2">CLIENT</span>
-            <span style="flex:1.0">PROJECT</span>
-            <span style="flex:0.9">CATEGORY</span>
+            <span style="flex:0.6">INVOICE</span>
+            <span style="flex:0.6">DATE</span>
+            <span style="flex:1.0">CLIENT</span>
+            <span style="flex:1.2">PROJECT</span>
+            <span style="flex:0.7">CATEGORY</span>
             <span style="flex:0.6;text-align:right">NETTO</span>
-            <span style="flex:1.2;text-align:center">ACTIONS</span>
+            <span style="flex:0.5;text-align:center">ACTION</span>
         </div>""", unsafe_allow_html=True)
 
         _cs2 = f'font-size:0.82rem;color:{_t()["text"]};padding:0.3rem 0;font-family:{FONT};'
@@ -1753,7 +2059,16 @@ def tab_income(data):
             cat_name = str(r.get('Category', ''))
             netto = pd.to_numeric(r.get('Netto (€)', 0), errors='coerce')
 
-            cols = st.columns([0.3, 0.7, 0.7, 1.2, 1.0, 0.9, 0.6, 0.6, 0.6])
+            # Mobile card
+            st.markdown(mobile_card_html(
+                title=f'{inv_num} — {client}',
+                amount=fmt_eur(netto) if not pd.isna(netto) else '',
+                fields=[('Date', date_str), ('Project', project), ('Category', cat_name)],
+                amount_class='negative',
+            ), unsafe_allow_html=True)
+
+            # Desktop columns
+            cols = st.columns([0.3, 0.6, 0.6, 1.0, 1.2, 0.7, 0.6, 0.5])
             with cols[0]:
                 st.markdown(f'<div style="{_cs2}color:{_t()["text_secondary"]}">{idx}</div>', unsafe_allow_html=True)
             with cols[1]:
@@ -1763,20 +2078,18 @@ def tab_income(data):
             with cols[3]:
                 st.markdown(f'<div style="{_cs2}">{client}</div>', unsafe_allow_html=True)
             with cols[4]:
-                st.markdown(f'<div style="{_cs2}">{project}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="{_cs2}color:{_t()["text_secondary"]}">{project}</div>', unsafe_allow_html=True)
             with cols[5]:
-                st.markdown(f'<div style="{_cs2}">{badge_html(cat_name, cat_name)}</div>', unsafe_allow_html=True)
+                st.markdown('<div class="tx-actions">', unsafe_allow_html=True)
+                if st.button(cat_name, key=f"cat_unpaid_{inv_num}"):
+                    edit_invoice_category_dialog(r.to_dict(), 'unpaid')
+                st.markdown('</div>', unsafe_allow_html=True)
             with cols[6]:
                 st.markdown(f'<div style="{_cs2}text-align:right;font-weight:600">{fmt_eur(netto) if not pd.isna(netto) else ""}</div>', unsafe_allow_html=True)
             with cols[7]:
                 st.markdown('<div class="tx-actions">', unsafe_allow_html=True)
-                if st.button("Mark Paid", key=f"paid_{inv_num}"):
+                if st.button("Edit", key=f"paid_{inv_num}"):
                     mark_invoice_paid_dialog(r.to_dict())
-                st.markdown('</div>', unsafe_allow_html=True)
-            with cols[8]:
-                st.markdown('<div class="tx-actions tx-del">', unsafe_allow_html=True)
-                if st.button("Delete", key=f"del_unpaid_{inv_num}"):
-                    delete_income_invoice_dialog(r.to_dict(), 'unpaid')
                 st.markdown('</div>', unsafe_allow_html=True)
 
     elif total_unpaid == 0:
@@ -3091,10 +3404,16 @@ def scan_expense_changes(expenses_df=None):
     return changes
 
 
-def update_invoice_status_in_excel(invoice_number, new_status):
-    """Move an invoice row between paid and unpaid sections in the Income sheet (Google Sheets)."""
+def update_invoice_status_in_excel(invoice_number, new_status, date_paid=None):
+    """Move an invoice row between paid and unpaid sections in the Income sheet (Google Sheets).
+    When marking as paid, writes date_paid to column J ('Date Paid')."""
     ws = _gsheet().worksheet('Income')
     all_vals = ws.get_all_values()
+
+    # Ensure 'Date Paid' header exists in column J
+    header_row = all_vals[0] if all_vals else []
+    if len(header_row) < 10 or header_row[9] != 'Date Paid':
+        ws.update_acell('J1', 'Date Paid')
 
     # Find source row (1-indexed)
     source_row = None
@@ -3118,7 +3437,7 @@ def update_invoice_status_in_excel(invoice_number, new_status):
     unpaid_label_row = None
     unpaid_total_row = None
 
-    formulas = ws.get('A1:I' + str(len(all_vals)), value_render_option='FORMULA')
+    formulas = ws.get('A1:J' + str(len(all_vals)), value_render_option='FORMULA')
     for i, row in enumerate(formulas[1:], start=2):
         cell_a = row[0] if row else ''
         cell_g = row[6] if len(row) > 6 else ''
@@ -3138,7 +3457,9 @@ def update_invoice_status_in_excel(invoice_number, new_status):
         if unpaid_total_row is None:
             return False
         insert_at = unpaid_total_row
-        ws.insert_rows([source_data], row=insert_at, value_input_option='USER_ENTERED')
+        # Clear date paid when moving to unpaid
+        row_data = source_data + ['']
+        ws.insert_rows([row_data], row=insert_at, value_input_option='USER_ENTERED')
         del_row = source_row if source_row < insert_at else source_row + 1
         ws.delete_rows(del_row)
 
@@ -3146,7 +3467,10 @@ def update_invoice_status_in_excel(invoice_number, new_status):
         if paid_total_row is None:
             return False
         insert_at = paid_total_row
-        ws.insert_rows([source_data], row=insert_at, value_input_option='USER_ENTERED')
+        # Append date paid as column J
+        date_paid_str = date_paid.strftime('%d.%m.%Y') if date_paid else ''
+        row_data = source_data + [date_paid_str]
+        ws.insert_rows([row_data], row=insert_at, value_input_option='USER_ENTERED')
         # source_row shifted down by 1 since we inserted above it
         ws.delete_rows(source_row + 1)
 
@@ -3658,8 +3982,8 @@ def upload_expense_dialog():
             _invalidate_data_caches()
 
         _log_activity('Expense Added', f"{recipient.strip()} | {category} | {fmt_eur(netto)}")
-        st.success(f"Expense saved! PDF uploaded as: `{saved_path}`")
-        st.balloons()
+        st.session_state['_toast'] = f'Expense saved! PDF: {saved_path}'
+        st.rerun()
 
 
 @st.dialog("Delete Expense")
@@ -3710,28 +4034,38 @@ def delete_expense_dialog(expense):
                 if success:
                     _invalidate_data_caches()
                     _log_activity('Expense Deleted', f"ID {invoice_id} | {expense.get('Recipient', '')} | {fmt_eur(expense.get('Netto (€)', 0))}")
-                    st.success("Expense deleted successfully.")
-                    import time; time.sleep(0.5)
+                    st.session_state['_toast'] = 'Expense deleted successfully.'
                     st.session_state['active_page'] = 'Expenses'
                     st.rerun()
                 else:
                     st.error("Could not find the expense row in the spreadsheet.")
 
 
-@st.dialog("Mark Invoice as Paid")
+@st.dialog("Edit Unpaid Invoice")
 def mark_invoice_paid_dialog(invoice_data):
-    """Move an unpaid invoice to paid: update sheet row + rename PDF on Drive."""
+    """Edit an unpaid invoice — optionally mark as paid with a payment date."""
     inv_num = str(invoice_data.get('Invoice Number', ''))
     client = str(invoice_data.get('Client', ''))
     netto = pd.to_numeric(invoice_data.get('Netto (€)', 0), errors='coerce')
 
-    st.markdown("**Mark this invoice as paid?**")
+    # Invoice creation date from sheet
+    creation_date_str = ''
+    if invoice_data.get('Date') and pd.notna(invoice_data['Date']):
+        try:
+            creation_date_str = pd.to_datetime(invoice_data['Date']).strftime('%d.%m.%Y')
+        except Exception:
+            creation_date_str = str(invoice_data['Date'])
+
     st.markdown(f"""
 - **Invoice:** {inv_num}
 - **Client:** {client}
 - **Amount:** {fmt_eur(netto)}
+- **Created:** {creation_date_str}
 """)
-    st.info("This will move the invoice to the Paid section and rename the PDF on Google Drive (remove `notpaid_` prefix).")
+
+    st.divider()
+    st.markdown("**Mark as Paid**")
+    date_paid = st.date_input("Date of Payment", value=datetime.today(), format="DD.MM.YYYY", key='mark_paid_date')
 
     col1, col2 = st.columns(2)
     with col1:
@@ -3740,8 +4074,8 @@ def mark_invoice_paid_dialog(invoice_data):
     with col2:
         if st.button("Mark as Paid", type="primary", use_container_width=True, key='mark_paid_confirm'):
             with st.spinner("Updating..."):
-                # 1. Move row in spreadsheet
-                ok = update_invoice_status_in_excel(inv_num, 'paid')
+                # 1. Move row in spreadsheet and write payment date
+                ok = update_invoice_status_in_excel(inv_num, 'paid', date_paid=date_paid)
                 # 2. Rename PDF on Drive (remove notpaid_ prefix)
                 try:
                     inv_folder_id = _get_invoices_folder_id()
@@ -3758,11 +4092,61 @@ def mark_invoice_paid_dialog(invoice_data):
                 _invalidate_data_caches()
                 if ok:
                     _log_activity('Invoice Marked Paid', f"#{inv_num} | {client} | {fmt_eur(netto)}")
-                    st.success("Invoice marked as paid!")
+                    st.session_state['_toast'] = 'Invoice marked as paid!'
                 else:
-                    st.warning("PDF renamed but could not move spreadsheet row. Please check manually.")
-                import time; time.sleep(0.8)
+                    st.session_state['_toast'] = 'PDF renamed but could not move spreadsheet row. Check manually.'
                 st.rerun()
+
+
+@st.dialog("Edit Invoice Category")
+def edit_invoice_category_dialog(invoice_data, status):
+    """Change the category of a paid or unpaid invoice."""
+    inv_num = str(invoice_data.get('Invoice Number', ''))
+    client = str(invoice_data.get('Client', ''))
+    current_cat = str(invoice_data.get('Category', ''))
+    netto = pd.to_numeric(invoice_data.get('Netto (€)', 0), errors='coerce')
+
+    st.markdown(f"""
+- **Invoice:** {inv_num}
+- **Client:** {client}
+- **Amount:** {fmt_eur(netto)}
+""")
+    # Build category list, ensure current is included
+    cats = list(INCOME_CATEGORIES)
+    if current_cat and current_cat not in cats:
+        cats.insert(0, current_cat)
+    cat_idx = cats.index(current_cat) if current_cat in cats else 0
+    new_cat = st.selectbox("Category", cats, index=cat_idx, key='edit_inv_cat')
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Cancel", use_container_width=True, key='edit_cat_cancel'):
+            st.rerun()
+    with col2:
+        if st.button("Save", type="primary", use_container_width=True, key='edit_cat_save'):
+            if new_cat != current_cat:
+                with st.spinner("Updating..."):
+                    _update_invoice_category(inv_num, new_cat)
+                    _invalidate_data_caches()
+                    _log_activity('Category Changed', f"#{inv_num} | {current_cat} → {new_cat}")
+                    st.session_state['_toast'] = f'Category updated to {new_cat}'
+            st.rerun()
+
+
+def _update_invoice_category(invoice_number, new_category):
+    """Update the Category column (G) for an invoice in the Income sheet."""
+    ws = _gsheet().worksheet('Income')
+    all_vals = ws.get_all_values()
+    for i, row in enumerate(all_vals[1:], start=2):
+        cell_b = row[1] if len(row) > 1 else ''
+        try:
+            cell_str = str(int(float(cell_b))) if cell_b else ''
+        except (ValueError, TypeError):
+            cell_str = str(cell_b).strip()
+        if cell_str == str(invoice_number).strip():
+            ws.update_acell(f'G{i}', new_category)
+            return True
+    return False
 
 
 @st.dialog("Delete Invoice")
@@ -3792,6 +4176,7 @@ def delete_income_invoice_dialog(invoice_data, status):
                 _delete_invoice_pdf(inv_num)
                 _invalidate_data_caches()
                 _log_activity('Invoice Deleted', f"#{inv_num} | {client} | {fmt_eur(netto)}")
+                st.session_state['_toast'] = 'Invoice deleted.'
                 st.rerun()
 
 
@@ -3913,8 +4298,7 @@ def edit_expense_dialog(expense):
                 if success:
                     _invalidate_data_caches()
                     _log_activity('Expense Edited', f"ID {invoice_id} | {new_recipient.strip()} | {fmt_eur(new_netto)}")
-                    st.success("Expense updated successfully.")
-                    import time; time.sleep(0.5)
+                    st.session_state['_toast'] = 'Expense updated successfully.'
                     st.session_state['active_page'] = 'Expenses'
                     st.rerun()
                 else:
@@ -4250,6 +4634,11 @@ def main():
         unpaid_total = pd.to_numeric(
             unpaid_df.get('Netto (€)', pd.Series(dtype=float)), errors='coerce'
         ).sum()
+
+    # Show pending toast notification
+    _pending_toast = st.session_state.pop('_toast', None)
+    if _pending_toast:
+        st.toast(_pending_toast, icon='✅')
 
     # Route to active page
     active = st.session_state.get('active_page', 'Dashboard')

@@ -38,42 +38,42 @@ MONTHS = [
 
 # ─── Theme System (Dark Only — Linear/Vercel Style) ─────────────────────────
 THEME = {
-    'bg': '#09090B',
-    'surface': '#18181B',
-    'surface2': '#27272A',
-    'surface3': '#3F3F46',
-    'border': '#27272A',
-    'border_hover': '#3F3F46',
-    'text': '#FAFAFA',
-    'text_secondary': '#A1A1AA',
-    'muted': '#71717A',
-    'card_shadow': 'none',
-    'card_shadow_hover': 'none',
-    'chart_grid': '#27272A',
-    'chart_zeroline': '#3F3F46',
-    'row_hover': '#1F1F23',
-    'row_border': '#27272A',
+    'bg': '#F8F9FB',
+    'surface': '#FFFFFF',
+    'surface2': '#F1F3F5',
+    'surface3': '#E5E7EB',
+    'border': '#E5E7EB',
+    'border_hover': '#D1D5DB',
+    'text': '#1F2937',
+    'text_secondary': '#6B7280',
+    'muted': '#9CA3AF',
+    'card_shadow': '0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)',
+    'card_shadow_hover': '0 4px 12px rgba(0,0,0,0.08)',
+    'chart_grid': '#E5E7EB',
+    'chart_zeroline': '#D1D5DB',
+    'row_hover': '#F3F4F6',
+    'row_border': '#E5E7EB',
     'accent': '#3B82F6',
     'accent_hover': '#2563EB',
-    'accent_dim': 'rgba(59,130,246,0.1)',
-    'accent_text': '#60A5FA',
-    'positive': '#4ADE80',
-    'positive_dim': 'rgba(74,222,128,0.1)',
-    'negative': '#F87171',
-    'negative_dim': 'rgba(248,113,113,0.1)',
-    'sidebar_bg': '#09090B',
-    'sidebar_text': '#FAFAFA',
-    'sidebar_text_dim': '#71717A',
-    'sidebar_section': '#52525B',
-    'sidebar_border': '#27272A',
-    'sidebar_hover': '#18181B',
-    'sidebar_active_bg': 'rgba(59,130,246,0.1)',
-    'sidebar_active_text': '#60A5FA',
+    'accent_dim': 'rgba(59,130,246,0.08)',
+    'accent_text': '#2563EB',
+    'positive': '#16A34A',
+    'positive_dim': 'rgba(22,163,74,0.08)',
+    'negative': '#DC2626',
+    'negative_dim': 'rgba(220,38,38,0.06)',
+    'sidebar_bg': '#FFFFFF',
+    'sidebar_text': '#1F2937',
+    'sidebar_text_dim': '#9CA3AF',
+    'sidebar_section': '#6B7280',
+    'sidebar_border': '#E5E7EB',
+    'sidebar_hover': '#F3F4F6',
+    'sidebar_active_bg': 'rgba(59,130,246,0.08)',
+    'sidebar_active_text': '#2563EB',
     'sidebar_active_border': '#3B82F6',
 }
 
 def _t():
-    """Return theme dict (dark only)."""
+    """Return theme dict (light mode)."""
     return THEME
 
 def _chart_primary():
@@ -85,38 +85,38 @@ def _chart_primary_dim():
 # ─── Accent Colors ──────────────────────────────────────────────────────────
 C_PRIMARY = '#3B82F6'
 C_PRIMARY_LIGHT = '#60A5FA'
-C_GREEN = '#4ADE80'
-C_GREEN_BG = 'rgba(74,222,128,0.1)'
-C_GREEN_DIM = 'rgba(74,222,128,0.15)'
-C_RED = '#F87171'
-C_RED_DIM = 'rgba(248,113,113,0.1)'
-C_AMBER = '#FBBF24'
-C_AMBER_BG = 'rgba(251,191,36,0.1)'
-C_BLUE = '#60A5FA'
+C_GREEN = '#16A34A'
+C_GREEN_BG = 'rgba(22,163,74,0.08)'
+C_GREEN_DIM = 'rgba(22,163,74,0.1)'
+C_RED = '#DC2626'
+C_RED_DIM = 'rgba(220,38,38,0.06)'
+C_AMBER = '#D97706'
+C_AMBER_BG = 'rgba(217,119,6,0.08)'
+C_BLUE = '#2563EB'
 
 CHART_COLORS = [
-    '#3B82F6', '#60A5FA', '#93C5FD', '#6366F1', '#818CF8',
-    '#A78BFA', '#22D3EE', '#2DD4BF', '#4ADE80', '#A1A1AA', '#71717A',
+    '#3B82F6', '#6366F1', '#8B5CF6', '#EC4899', '#F59E0B',
+    '#10B981', '#06B6D4', '#EF4444', '#14B8A6', '#6B7280', '#4B5563',
 ]
 
 # Badge color mapping: category → (text_color, bg_color)
 BADGE_STYLES = {
-    'AI Software': ('#A1A1AA', '#27272A'),
-    'AI Studio': ('#A1A1AA', '#27272A'),
-    'Accounting': ('#A1A1AA', '#27272A'),
-    'Insurance': ('#A1A1AA', '#27272A'),
-    'Office': ('#A1A1AA', '#27272A'),
-    'Miles': ('#A1A1AA', '#27272A'),
-    'Education': ('#A1A1AA', '#27272A'),
-    'Restaurants': ('#A1A1AA', '#27272A'),
-    'Travel Cost': ('#A1A1AA', '#27272A'),
-    'Gewerbe': ('#A1A1AA', '#27272A'),
-    'Gear': ('#A1A1AA', '#27272A'),
-    'Gear Rental': ('#A1A1AA', '#27272A'),
-    'Animation': ('#A1A1AA', '#27272A'),
-    'Photography': ('#A1A1AA', '#27272A'),
-    'Video Production': ('#A1A1AA', '#27272A'),
-    'Software': ('#A1A1AA', '#27272A'),
+    'AI Software': ('#4B5563', '#F1F3F5'),
+    'AI Studio': ('#4B5563', '#F1F3F5'),
+    'Accounting': ('#4B5563', '#F1F3F5'),
+    'Insurance': ('#4B5563', '#F1F3F5'),
+    'Office': ('#4B5563', '#F1F3F5'),
+    'Miles': ('#4B5563', '#F1F3F5'),
+    'Education': ('#4B5563', '#F1F3F5'),
+    'Restaurants': ('#4B5563', '#F1F3F5'),
+    'Travel Cost': ('#4B5563', '#F1F3F5'),
+    'Gewerbe': ('#4B5563', '#F1F3F5'),
+    'Gear': ('#4B5563', '#F1F3F5'),
+    'Gear Rental': ('#4B5563', '#F1F3F5'),
+    'Animation': ('#4B5563', '#F1F3F5'),
+    'Photography': ('#4B5563', '#F1F3F5'),
+    'Video Production': ('#4B5563', '#F1F3F5'),
+    'Software': ('#4B5563', '#F1F3F5'),
 }
 
 FONT = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
@@ -379,10 +379,10 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ─── Custom CSS (dark only) ──────────────────────────────────────────────────
+# ─── Custom CSS (light theme) ────────────────────────────────────────────────
 @st.cache_data(ttl=3600)
 def _build_css():
-    """Build the CSS string. Dark-only theme, cached."""
+    """Build the CSS string. Light theme, cached."""
     t = THEME
     return f"""
 <style>
@@ -458,14 +458,14 @@ def _build_css():
     .card {{
         background: {t['surface']};
         border: 1px solid {t['border']};
-        border-radius: 8px;
+        border-radius: 12px;
         padding: 20px;
-        box-shadow: none;
-        transition: border-color 0.2s ease;
+        box-shadow: {t['card_shadow']};
+        transition: box-shadow 0.2s ease, border-color 0.2s ease;
         margin-bottom: 16px;
     }}
     .card:hover {{
-        box-shadow: none;
+        box-shadow: {t['card_shadow_hover']};
         border-color: {t['border_hover']};
     }}
     .card-label {{
@@ -569,7 +569,7 @@ def _build_css():
         text-transform: uppercase;
     }}
     .badge-paid {{ color: {t['positive']}; background: {t['positive_dim']}; }}
-    .badge-sent {{ color: #FBBF24; background: rgba(251,191,36,0.1); }}
+    .badge-sent {{ color: #D97706; background: rgba(217,119,6,0.08); }}
     .badge-draft {{ color: {t['muted']}; background: {t['surface2']}; }}
 
     /* ── Filter Pills (horizontal radio in dashboard) ── */
@@ -1214,7 +1214,7 @@ def _build_css():
 
 
 def _inject_css():
-    """Inject dark theme CSS."""
+    """Inject light theme CSS."""
     st.markdown(_build_css(), unsafe_allow_html=True)
 
 _inject_css()
@@ -1497,7 +1497,7 @@ def fmt_eur(v):
 
 def badge_html(text, category=None):
     """Generate inline badge span for a category."""
-    colors = BADGE_STYLES.get(category or text, ('#A1A1AA', '#27272A'))
+    colors = BADGE_STYLES.get(category or text, ('#4B5563', '#F1F3F5'))
     return (f'<span class="badge" style="color:{colors[0]};background:{colors[1]}">'
             f'{text}</span>')
 

@@ -38,38 +38,39 @@ MONTHS = [
 
 # ─── Theme System (Dark Only — Linear/Vercel Style) ─────────────────────────
 THEME = {
-    'bg': '#F8F9FB',
-    'surface': '#FFFFFF',
-    'surface2': '#F1F3F5',
-    'surface3': '#E5E7EB',
-    'border': '#E5E7EB',
-    'border_hover': '#D1D5DB',
-    'text': '#1F2937',
-    'text_secondary': '#6B7280',
-    'muted': '#9CA3AF',
-    'card_shadow': '0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)',
-    'card_shadow_hover': '0 4px 12px rgba(0,0,0,0.08)',
-    'chart_grid': '#E5E7EB',
-    'chart_zeroline': '#D1D5DB',
-    'row_hover': '#F3F4F6',
-    'row_border': '#E5E7EB',
-    'accent': '#3B82F6',
-    'accent_hover': '#2563EB',
-    'accent_dim': 'rgba(59,130,246,0.08)',
-    'accent_text': '#2563EB',
-    'positive': '#16A34A',
-    'positive_dim': 'rgba(22,163,74,0.08)',
-    'negative': '#DC2626',
-    'negative_dim': 'rgba(220,38,38,0.06)',
-    'sidebar_bg': '#FFFFFF',
-    'sidebar_text': '#1F2937',
-    'sidebar_text_dim': '#9CA3AF',
-    'sidebar_section': '#6B7280',
-    'sidebar_border': '#E5E7EB',
-    'sidebar_hover': '#F3F4F6',
-    'sidebar_active_bg': 'rgba(59,130,246,0.08)',
-    'sidebar_active_text': '#2563EB',
-    'sidebar_active_border': '#3B82F6',
+    'bg': '#0A0A0A',
+    'surface': '#0A0A0A',          # cards sit on bg; separation comes from 1px gaps, not fills
+    'surface2': '#141414',
+    'surface3': '#1D1D1D',
+    'border': '#242424',
+    'border_hover': '#333333',
+    'text': '#EDEDED',
+    'text_secondary': '#A8A8A8',
+    'muted': '#6F6F6F',
+    'card_shadow': 'none',
+    'card_shadow_hover': 'none',
+    'chart_grid': '#2C2C2C',
+    'chart_zeroline': '#2C2C2C',
+    'row_hover': '#141414',
+    'row_border': '#262626',
+    'accent': '#E0322C',           # Nothing red — money/attention only
+    'accent_hover': '#FF3B30',
+    'accent_dim': 'rgba(224,50,44,0.12)',
+    'accent_text': '#E0322C',
+    'positive': '#63C98C',
+    'positive_dim': 'rgba(99,201,140,0.12)',
+    'negative': '#E0322C',
+    'negative_dim': 'rgba(224,50,44,0.10)',
+    # Sidebar values kept for safety even though nav moves to the top bar:
+    'sidebar_bg': '#0A0A0A',
+    'sidebar_text': '#EDEDED',
+    'sidebar_text_dim': '#6F6F6F',
+    'sidebar_section': '#4D4D4D',
+    'sidebar_border': '#242424',
+    'sidebar_hover': '#141414',
+    'sidebar_active_bg': 'rgba(224,50,44,0.12)',
+    'sidebar_active_text': '#EDEDED',
+    'sidebar_active_border': '#E0322C',
 }
 
 def _t():
@@ -77,49 +78,52 @@ def _t():
     return THEME
 
 def _chart_primary():
-    return '#3B82F6'
+    return '#EDEDED'   # monthly income = white bars
 
 def _chart_primary_dim():
-    return '#60A5FA'
+    return '#8F9AD6'
 
-# ─── Accent Colors ──────────────────────────────────────────────────────────
-C_PRIMARY = '#3B82F6'
-C_PRIMARY_LIGHT = '#60A5FA'
-C_GREEN = '#16A34A'
-C_GREEN_BG = 'rgba(22,163,74,0.08)'
-C_GREEN_DIM = 'rgba(22,163,74,0.1)'
-C_RED = '#DC2626'
-C_RED_DIM = 'rgba(220,38,38,0.06)'
-C_AMBER = '#D97706'
-C_AMBER_BG = 'rgba(217,119,6,0.08)'
-C_BLUE = '#2563EB'
+# ─── Accent Colors (Nothing) ────────────────────────────────────────────────
+C_PRIMARY = '#8F9AD6'        # top-clients / neutral bars
+C_PRIMARY_LIGHT = '#B89FD6'
+C_GREEN = '#63C98C'          # paid / positive
+C_GREEN_BG = 'rgba(99,201,140,0.12)'
+C_GREEN_DIM = 'rgba(99,201,140,0.12)'
+C_RED = '#E0322C'            # expenses / unpaid / overdue
+C_RED_DIM = 'rgba(224,50,44,0.10)'
+C_AMBER = '#C9A45C'
+C_AMBER_BG = 'rgba(201,164,92,0.12)'
+C_BLUE = '#5C9FC9'
 
 CHART_COLORS = [
-    '#3B82F6', '#6366F1', '#8B5CF6', '#EC4899', '#F59E0B',
-    '#10B981', '#06B6D4', '#EF4444', '#14B8A6', '#6B7280', '#4B5563',
+    '#7B7FD6', '#A98FD6', '#D68FB0', '#D67A72', '#C9A45C', '#63C98C',
+    '#5CC9C0', '#5C9FC9', '#6FCE9F', '#8F9AD6', '#9A9A9A', '#6F6F6F', '#B89FD6',
 ]
 
-# Badge color mapping: category → (text_color, bg_color)
+# Badge color mapping: category → (text_color, bg_color).
+# Nothing: every category is the same muted outlined pill; the 1px border comes
+# from CSS, the bg is transparent.
 BADGE_STYLES = {
-    'AI Software': ('#4B5563', '#F1F3F5'),
-    'AI Studio': ('#4B5563', '#F1F3F5'),
-    'Accounting': ('#4B5563', '#F1F3F5'),
-    'Insurance': ('#4B5563', '#F1F3F5'),
-    'Office': ('#4B5563', '#F1F3F5'),
-    'Miles': ('#4B5563', '#F1F3F5'),
-    'Education': ('#4B5563', '#F1F3F5'),
-    'Restaurants': ('#4B5563', '#F1F3F5'),
-    'Travel Cost': ('#4B5563', '#F1F3F5'),
-    'Gewerbe': ('#4B5563', '#F1F3F5'),
-    'Gear': ('#4B5563', '#F1F3F5'),
-    'Gear Rental': ('#4B5563', '#F1F3F5'),
-    'Animation': ('#4B5563', '#F1F3F5'),
-    'Photography': ('#4B5563', '#F1F3F5'),
-    'Video Production': ('#4B5563', '#F1F3F5'),
-    'Software': ('#4B5563', '#F1F3F5'),
+    'AI Software': ('#A8A8A8', 'transparent'),
+    'AI Studio': ('#A8A8A8', 'transparent'),
+    'Accounting': ('#A8A8A8', 'transparent'),
+    'Insurance': ('#A8A8A8', 'transparent'),
+    'Office': ('#A8A8A8', 'transparent'),
+    'Miles': ('#A8A8A8', 'transparent'),
+    'Education': ('#A8A8A8', 'transparent'),
+    'Restaurants': ('#A8A8A8', 'transparent'),
+    'Travel Cost': ('#A8A8A8', 'transparent'),
+    'Gewerbe': ('#A8A8A8', 'transparent'),
+    'Gear': ('#A8A8A8', 'transparent'),
+    'Gear Rental': ('#A8A8A8', 'transparent'),
+    'Animation': ('#A8A8A8', 'transparent'),
+    'Photography': ('#A8A8A8', 'transparent'),
+    'Video Production': ('#A8A8A8', 'transparent'),
+    'Software': ('#A8A8A8', 'transparent'),
 }
 
-FONT = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+FONT = "'Space Mono', ui-monospace, SFMono-Regular, monospace"
+NUM_FONT = "'Doto', 'Space Mono', monospace"   # numerals: KPI values, money, counts
 
 # Category → filename code mapping for uploaded expense PDFs
 CATEGORIES = [
@@ -376,7 +380,7 @@ st.set_page_config(
     page_title="JS() Finance 2026",
     page_icon="💼",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # ─── Custom CSS (light theme) ────────────────────────────────────────────────
@@ -386,11 +390,16 @@ def _build_css():
     t = THEME
     return f"""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Doto:wght@600;700;900&family=Space+Mono:wght@400;700&display=swap');
+
+    /* Numerals — dot-grid Doto look (KPI values, money, counts) */
+    .doto {{ font-family: 'Doto', monospace; font-weight: 700; letter-spacing: 0; }}
 
     /* ── Base ── */
     .stApp {{
         background-color: {t['bg']};
+        background-image: radial-gradient(#1D1D1D 1px, transparent 1px);
+        background-size: 9px 9px;
         font-family: {FONT};
         min-height: 100vh;
     }}
@@ -458,7 +467,7 @@ def _build_css():
     .card {{
         background: {t['surface']};
         border: 1px solid {t['border']};
-        border-radius: 12px;
+        border-radius: 4px;
         padding: 20px;
         box-shadow: {t['card_shadow']};
         transition: box-shadow 0.2s ease, border-color 0.2s ease;
@@ -481,8 +490,8 @@ def _build_css():
     .card-value {{
         font-size: 24px;
         font-weight: 700;
-        font-family: {FONT};
-        letter-spacing: -0.3px;
+        font-family: 'Doto', monospace;
+        letter-spacing: 0;
         color: {t['text']};
         white-space: nowrap;
         font-variant-numeric: tabular-nums;
@@ -503,7 +512,7 @@ def _build_css():
     .chart-card {{
         background: {t['surface']};
         border: 1px solid {t['border']};
-        border-radius: 8px;
+        border-radius: 4px;
         padding: 28px;
         margin-bottom: 20px;
         box-shadow: none;
@@ -537,7 +546,7 @@ def _build_css():
     }}
     .data-table td {{
         padding: 12px;
-        border-bottom: 1px solid {t['row_border']};
+        border-bottom: 1px dotted #262626;
         color: {t['text']};
         font-size: 13px;
     }}
@@ -545,11 +554,11 @@ def _build_css():
         background: {t['row_hover']};
     }}
     .data-table .num {{
-        font-family: {FONT};
+        font-family: 'Doto', monospace;
         text-align: right;
         font-size: 13px;
-        font-weight: 600;
-        letter-spacing: -0.02em;
+        font-weight: 700;
+        letter-spacing: 0;
         font-variant-numeric: tabular-nums;
     }}
     .data-table .total-row td {{
@@ -558,19 +567,65 @@ def _build_css():
         border-top: 2px solid {t['border']};
     }}
 
-    /* ── Badges ── */
+    /* ── Badges (outlined pills — Nothing) ── */
     .badge {{
         display: inline-block;
-        padding: 3px 10px;
-        border-radius: 4px;
+        padding: 3px 9px;
+        border-radius: 999px;
         font-size: 11px;
         font-weight: 600;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.08em;
         text-transform: uppercase;
+        color: #A8A8A8;
+        background: transparent;
+        border: 1px solid #333333;
     }}
-    .badge-paid {{ color: {t['positive']}; background: {t['positive_dim']}; }}
-    .badge-sent {{ color: #D97706; background: rgba(217,119,6,0.08); }}
-    .badge-draft {{ color: {t['muted']}; background: {t['surface2']}; }}
+    .badge-paid {{ color: #63C98C; background: transparent; border: 1px solid #333333; }}
+    .badge-sent {{ color: #C9A45C; background: transparent; border: 1px solid #333333; }}
+    .badge-draft {{ color: {t['muted']}; background: transparent; border: 1px solid #333333; }}
+
+    /* ── Top navigation (replaces sidebar) ── */
+    [data-testid="stSidebar"] {{ display: none !important; }}
+    [data-testid="stSidebarCollapsedControl"] {{ display: none !important; }}
+
+    .topbar {{
+        display: flex; align-items: center; gap: 20px;
+        height: 58px; padding: 0 8px;
+        border-bottom: 1px solid #242424;
+        margin: -12px 0 28px 0;
+        flex-wrap: wrap;
+    }}
+    .topbar-brand {{
+        font-family: 'Doto', monospace; font-weight: 900; font-size: 18px;
+        letter-spacing: 0.06em; color: {t['text']}; margin-right: 4px;
+    }}
+    .topbar-group {{ display: flex; align-items: center; gap: 14px; }}
+    .topbar-group-label {{
+        font-family: {FONT}; font-size: 8px; letter-spacing: 0.2em;
+        text-transform: uppercase; color: #4D4D4D;
+    }}
+    .topbar-divider {{ width: 1px; height: 16px; background: #333333; }}
+    .topbar-item {{
+        display: inline-flex; align-items: center; gap: 6px;
+        font-family: {FONT}; font-size: 10px; letter-spacing: 0.1em;
+        text-transform: uppercase; color: #6F6F6F; text-decoration: none;
+        transition: color 0.15s ease;
+    }}
+    .topbar-item:hover {{ color: {t['text_secondary']}; }}
+    .topbar-item.active {{ color: {t['text']}; }}
+    .topbar-item.active .topbar-dot {{
+        width: 5px; height: 5px; border-radius: 999px; background: #E0322C;
+        display: inline-block;
+    }}
+    .topbar-spacer {{ flex: 1; }}
+    .topbar-action {{
+        display: inline-flex; align-items: center; gap: 6px;
+        font-family: {FONT}; font-size: 10px; letter-spacing: 0.1em;
+        text-transform: uppercase; color: {t['text_secondary']}; text-decoration: none;
+        border: 1px solid #333333; border-radius: 999px; padding: 7px 14px;
+        transition: border-color 0.15s ease, color 0.15s ease;
+    }}
+    .topbar-action:hover {{ border-color: #E0322C; color: {t['text']}; }}
 
     /* ── Filter Pills (horizontal radio in dashboard) ── */
     [data-testid="stRadio"] > div[role="radiogroup"] {{
@@ -846,7 +901,7 @@ def _build_css():
         display: flex;
         align-items: center;
         padding: 12px;
-        border-bottom: 1px solid {t['row_border']};
+        border-bottom: 1px dotted #262626;
         font-size: 13px;
         color: {t['text']};
         font-family: {FONT};
@@ -1434,8 +1489,8 @@ def chart_layout(fig, height=400, **kw):
             bgcolor='rgba(0,0,0,0)', bordercolor='rgba(0,0,0,0)',
             font=dict(color=t['muted'], size=11, family=FONT),
         ),
-        xaxis=dict(gridcolor=t['chart_grid'], zerolinecolor=t['chart_zeroline']),
-        yaxis=dict(gridcolor=t['chart_grid'], zerolinecolor=t['chart_zeroline']),
+        xaxis=dict(gridcolor=t['chart_grid'], zerolinecolor=t['chart_zeroline'], griddash='dot'),
+        yaxis=dict(gridcolor=t['chart_grid'], zerolinecolor=t['chart_zeroline'], griddash='dot'),
         **kw,
     )
     return fig
@@ -1497,7 +1552,7 @@ def fmt_eur(v):
 
 def badge_html(text, category=None):
     """Generate inline badge span for a category."""
-    colors = BADGE_STYLES.get(category or text, ('#4B5563', '#F1F3F5'))
+    colors = BADGE_STYLES.get(category or text, ('#A8A8A8', 'transparent'))
     return (f'<span class="badge" style="color:{colors[0]};background:{colors[1]}">'
             f'{text}</span>')
 
@@ -1708,8 +1763,8 @@ def tab_expenses(data):
     cat = df.groupby('Category')['Netto (€)'].sum().sort_values(ascending=False).reset_index()
     fig = go.Figure(data=[go.Pie(
         labels=cat['Category'], values=cat['Netto (€)'],
-        hole=0.55,
-        marker=dict(colors=CHART_COLORS[:len(cat)], line=dict(width=0)),
+        hole=0.68,
+        marker=dict(colors=CHART_COLORS[:len(cat)], line=dict(color='#0A0A0A', width=2)),
         textinfo='label+percent',
         textfont=dict(size=13, color=_t()["text"], family=FONT),
         hovertemplate='<b>%{label}</b><br>\u20ac%{value:,.2f}<br>%{percent}<extra></extra>',
@@ -1750,7 +1805,7 @@ def tab_expenses(data):
     vendor = df.groupby('Recipient')['Netto (€)'].sum().sort_values(ascending=True).tail(15).reset_index()
     fig_vendor = go.Figure(go.Bar(
         y=vendor['Recipient'], x=vendor['Netto (€)'], orientation='h',
-        marker_color=_chart_primary(),
+        marker_color=_chart_primary_dim(),
         marker=dict(cornerradius=4),
         text=[fmt_eur(v) for v in vendor['Netto (€)']],
         textposition='outside', textfont=dict(color=_t()["text"], size=10, family=FONT),
@@ -1928,8 +1983,8 @@ def tab_income(data):
         if cat_totals:
             fig = go.Figure(data=[go.Pie(
                 labels=list(cat_totals.keys()), values=list(cat_totals.values()),
-                hole=0.55,
-                marker=dict(colors=CHART_COLORS[:len(cat_totals)], line=dict(width=0)),
+                hole=0.68,
+                marker=dict(colors=CHART_COLORS[:len(cat_totals)], line=dict(color='#0A0A0A', width=2)),
                 textinfo='label+percent+value',
                 texttemplate='%{label}<br>\u20ac%{value:,.0f}<br>(%{percent})',
                 textfont=dict(size=12, color=_t()["text"], family=FONT),
@@ -2228,7 +2283,7 @@ def tab_goal(data):
             x=labels, y=cum_vals, mode='lines+markers', name='Cumulative Income',
             line=dict(color=_chart_primary(), width=3),
             marker=dict(size=6, color=_chart_primary()),
-            fill='tozeroy', fillcolor='rgba(59,130,246,0.08)',
+            fill='tozeroy', fillcolor='rgba(237,237,237,0.06)',
             connectgaps=False,
         ))
         fig.add_trace(go.Scatter(
@@ -4517,6 +4572,53 @@ def sync_invoices_dialog():
 
 # ─── Main ────────────────────────────────────────────────────────────────────
 
+# ── Top navigation config ──
+# Grouped STUDIO / ACCOUNTING nav. Only pages that actually exist in this app
+# are listed (Projects/Gear/Transactions/Documents/System live in the separate
+# React app, not here). Each item: (slug, active_page name, label).
+NAV_GROUPS = [
+    ('STUDIO', [
+        ('goal', 'Goal Tracker', 'Goal Tracker'),
+    ]),
+    ('ACCOUNTING', [
+        ('dashboard', 'Dashboard', 'Dashboard'),
+        ('expenses', 'Expenses', 'Expenses'),
+        ('income', 'Income', 'Income'),
+        ('taxes', 'Taxes', 'Taxes'),
+        ('2025', '2025', '2025'),
+    ]),
+]
+SLUG_TO_PAGE = {slug: name for _, items in NAV_GROUPS for slug, name, _ in items}
+PAGE_TO_SLUG = {name: slug for slug, name in SLUG_TO_PAGE.items()}
+
+
+def render_top_nav(active):
+    """Render the horizontal Nothing-style top bar (replaces the sidebar)."""
+    active_slug = PAGE_TO_SLUG.get(active, 'dashboard')
+    parts = ['<div class="topbar">', '<span class="topbar-brand">BUSINESS</span>']
+    for gi, (group_label, items) in enumerate(NAV_GROUPS):
+        if gi > 0:
+            parts.append('<span class="topbar-divider"></span>')
+        parts.append('<span class="topbar-group-label">%s</span>' % group_label)
+        parts.append('<span class="topbar-group">')
+        for slug, name, label in items:
+            is_active = slug == active_slug
+            dot = '<span class="topbar-dot"></span>' if is_active else ''
+            cls = 'topbar-item active' if is_active else 'topbar-item'
+            parts.append(
+                '<a class="%s" href="?page=%s" target="_self">%s%s</a>'
+                % (cls, slug, dot, label)
+            )
+        parts.append('</span>')
+    parts.append('<span class="topbar-spacer"></span>')
+    parts.append('<a class="topbar-action" href="?action=upload" target="_self">'
+                 'UPLOAD EXPENSE +</a>')
+    parts.append('<a class="topbar-action" href="?action=update" target="_self">'
+                 'UPDATE</a>')
+    parts.append('</div>')
+    st.markdown(''.join(parts), unsafe_allow_html=True)
+
+
 def main():
     data = load_data()
 
@@ -4524,66 +4626,30 @@ def main():
     today = datetime.now()
     t = _t()
 
-    # ── Sidebar Navigation ──
+    # ── Top navigation (query-param routing) ──
+    if 'active_page' not in st.session_state:
+        st.session_state['active_page'] = 'Dashboard'
+
     _do_update = False
     _do_upload = False
-    with st.sidebar:
-        # Logo
-        st.markdown(f'''
-            <div style="padding:0 24px 32px;font-size:15px;font-weight:700;
-                        text-transform:uppercase;letter-spacing:0.5px;color:{t['sidebar_text']};
-                        font-family:{FONT};border-bottom:1px solid {t['sidebar_border']};
-                        margin-bottom:16px">
-                JS STUDIO
-            </div>
-        ''', unsafe_allow_html=True)
 
-        # Update / Upload buttons
-        st.markdown('<div class="sidebar-actions">', unsafe_allow_html=True)
-        col_upd, col_upl = st.columns(2)
-        with col_upd:
-            _do_update = st.button("UPDATE", key="sidebar_update", use_container_width=True)
-        with col_upl:
-            _do_upload = st.button("UPLOAD", key="sidebar_upload", use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+    # Consume nav / action query params, then clear them so session_state stays
+    # the single source of truth (cross-page jumps set active_page directly).
+    _qp = st.query_params
+    _nav_slug = _qp.get('page')
+    _action = _qp.get('action')
+    if _nav_slug in SLUG_TO_PAGE:
+        st.session_state['active_page'] = SLUG_TO_PAGE[_nav_slug]
+    if _action == 'upload':
+        _do_upload = True
+    elif _action == 'update':
+        _do_update = True
+    if _nav_slug is not None or _action is not None:
+        st.query_params.clear()
 
-        # Section label
-        st.markdown(f'''
-            <div style="padding:20px 24px 6px;font-size:10px;text-transform:uppercase;
-                        letter-spacing:1.5px;color:{t['sidebar_section']};font-family:{FONT};
-                        font-weight:500">
-                OVERVIEW
-            </div>
-        ''', unsafe_allow_html=True)
+    render_top_nav(st.session_state['active_page'])
 
-        # Nav items
-        if 'active_page' not in st.session_state:
-            st.session_state['active_page'] = 'Dashboard'
-
-        OVERVIEW_PAGES = ['Dashboard', 'Expenses', 'Income', 'Goal Tracker', 'Taxes', '2025']
-
-        def _sidebar_nav_item(page_name, key_suffix=None):
-            is_active = st.session_state['active_page'] == page_name
-            container_class = 'nav-active' if is_active else 'nav-item'
-            btn_key = f"nav_{key_suffix or page_name}"
-            with st.container():
-                st.markdown(f'<div class="{container_class}">', unsafe_allow_html=True)
-                st.button(page_name, key=btn_key, use_container_width=True,
-                          on_click=lambda p=page_name: st.session_state.update({'active_page': p}))
-                st.markdown('</div>', unsafe_allow_html=True)
-
-        for page_name in OVERVIEW_PAGES:
-            _sidebar_nav_item(page_name)
-
-        # Bottom section: date
-        st.markdown(f'''
-            <div style="border-top:1px solid {t['sidebar_border']};margin:20px 0 0 0;
-                        padding:12px 24px 8px;font-size:11px;color:{t['sidebar_text_dim']};font-family:{FONT}">
-                {today.strftime('%d.%m.%Y')}
-            </div>
-        ''', unsafe_allow_html=True)
-
-    # Handle button actions
+    # Handle action pills
     if _do_update:
         sync_invoices_dialog()
     if _do_upload:
@@ -4613,7 +4679,7 @@ def main():
             parts.append(f"{n_miss_exp} removed expense{'s' if n_miss_exp > 1 else ''}")
         summary = ", ".join(parts)
         st.markdown(f"""
-        <div style="background:{t['accent_dim']};border:1px solid rgba(59,130,246,0.2);
+        <div style="background:{t['accent_dim']};border:1px solid {t['accent_dim']};
                     border-radius:8px;padding:0.6rem 1rem;margin-bottom:0.75rem;
                     font-size:0.85rem;color:{t['accent_text']}">
             <strong>{len(auto_changes)} change{'s' if len(auto_changes) > 1 else ''} detected:</strong>
